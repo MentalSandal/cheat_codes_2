@@ -30,6 +30,9 @@ for i = 1,3 do
   end
 end
 
+last_global_level = {1,1,1}
+global_mute_modifier = {false,false,false}
+
 function grid_actions.init(x,y,z)
   
   if osc_communication == true then osc_communication = false end
@@ -769,7 +772,11 @@ function grid_actions.init(x,y,z)
               arp[id].down = arp[id].down + 1
             else
               if rytm.track[id].k == 0 then
-                cheat(id, bank[id].id)
+                if bank[id].quantize_press == 0 then
+                  cheat(id, bank[id].id)
+                else
+                  quantize_events[id] = {["bank"] = id, ["pad"] = bank[id].id}
+                end
               end
               grid_pattern_watch(id)
             end
@@ -976,11 +983,24 @@ function grid_actions.init(x,y,z)
                 if rytm.track[bank_64].k == 0 then
                   cheat(bank_64, b.id)
                 end
-                grid_pattern_watch(bank_64)
               end
             else
-              table.insert(quantize_events[bank_64],selected[bank_64].id)
+              if arp[bank_64].enabled and grid_pat[bank_64].rec == 0 and not arp[bank_64].pause then
+                if arp[bank_64].down == 0 and params:string("arp_"..bank_64.."_hold_style") == "last pressed" then
+                  for j = #arp[bank_64].notes,1,-1 do
+                    table.remove(arp[bank_64].notes,j)
+                  end
+                end
+                arp[bank_64].time = b[b.id].arp_time
+                arps.momentary(bank_64, b.id, "on")
+                arp[bank_64].down = arp[bank_64].down + 1
+              else
+                if rytm.track[bank_64].k == 0 then
+                  quantize_events[bank_64] = {["bank"] = bank_64, ["pad"] = bank[bank_64].id}
+                end
+              end
             end
+            grid_pattern_watch(bank_64)
           else
             local released_pad = (4*(y-4))+x
             arps.momentary(i, released_pad, "off")
@@ -1281,7 +1301,12 @@ function grid_actions.init(x,y,z)
       end
 
       if x == 8 and y == 1 and z == 1 then
-        grid_page_64 = 1
+        if grid_alt then
+          last_grid_page_64 = grid_page_64
+          grid_page_64 = 2
+        else
+          grid_page_64 = 1
+        end
       end
 
     elseif grid_page_64 == 1 then
@@ -1368,9 +1393,54 @@ function grid_actions.init(x,y,z)
       end
 
       if x == 8 and y == 1 and z == 1 then
-        grid_page_64 = 0
+        if grid_alt then
+          last_grid_page_64 = grid_page_64
+          grid_page_64 = 2
+        else
+          grid_page_64 = 0
+        end
       end
 
+    elseif grid_page_64 == 2 then
+      if x == 1 and y == 8 then
+        grid_alt = z == 1 and true or false
+      end
+      if x == 8 and y == 1 and z == 1 then
+        grid_page_64 = last_grid_page_64
+      end
+      if y >=2 and y<= 4 then
+        y = y-1
+        if z == 1 then
+          saved_pat = pattern_saver[y].saved[x] -- hate that this is global...
+          pattern_saver[y].source = y
+          pattern_saver[y].save_slot = x
+          if pattern_saver[y].clock ~= nil then
+            clock.cancel(pattern_saver[y].clock)
+          end
+          pattern_saver[y].clock = clock.run(test_save,y)
+          -- print("starting save "..pattern_saver[y].clock)
+        elseif z == 0 then
+          if pattern_saver[y].clock ~= nil then
+            clock.cancel(pattern_saver[y].clock)
+          end
+          pattern_saver[y].active = false
+          if not grid_alt and saved_pat == 1 then
+            if pattern_saver[y].saved[x] == 1 then
+              pattern_saver[y].load_slot = x
+              test_load(x+(8*(y-1)),y)
+            end
+          end
+        end
+      elseif y == 6 and (x == 1 or x == 2 or x == 3) then
+        if z == 1 and not global_mute_modifier[x] then
+          last_global_level[x] = params:get("bank level "..x)
+          params:set("bank level "..x,0)
+          global_mute_modifier[x] = true
+        elseif z == 0 then
+          global_mute_modifier[x] = false
+          params:set("bank level "..x,last_global_level[x])
+        end
+      end
     end
     grid_dirty = true
   end
@@ -1454,11 +1524,24 @@ function grid_actions.pad_down(i,p)
         if rytm.track[i].k == 0 then
           cheat(i, bank[i].id)
         end
-        grid_pattern_watch(i)
       end
     else
-      table.insert(quantize_events[i],selected[i].id)
+      if arp[i].enabled and grid_pat[i].rec == 0 and not arp[i].pause then
+        if arp[i].down == 0 and params:string("arp_"..i.."_hold_style") == "last pressed" then
+          for j = #arp[i].notes,1,-1 do
+            table.remove(arp[i].notes,j)
+          end
+        end
+        arp[i].time = bank[i][bank[i].id].arp_time
+        arps.momentary(i, bank[i].id, "on")
+        arp[i].down = arp[i].down + 1
+      else
+        if rytm.track[i].k == 0 then
+          quantize_events[i] = {["bank"] = i, ["pad"] = bank[i].id}
+        end
+      end
     end
+    grid_pattern_watch(i)
   else
     local released_pad = p
     arps.momentary(i, released_pad, "off")

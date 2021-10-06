@@ -1,6 +1,6 @@
 -- cheat codes 2
 --          a sample playground
--- rev: 210714
+-- rev: 211006 - LTS3
 -- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 
 -- need help?
 -- please visit:
@@ -49,6 +49,21 @@ end
 --   print("available instruments: ")
 --   tab.print(mxcc:list_instruments())
 -- end
+
+engine.name = 'PolyPerc'
+
+function metronome_audio()
+  while true do
+    clock.sync(1)
+    if params:string("metronome_audio_state") == "on" and transport.is_running then
+      if util.round(clock.get_beats()%4) == 0 then
+        engine.hz(params:get("metronome_one_beat_pitch"))
+      else
+        engine.hz(params:get("metronome_alt_beat_pitch"))
+      end
+    end
+  end
+end
 
 local pattern_time = include 'lib/cc_pattern_time'
 MU = require "musicutil"
@@ -330,39 +345,9 @@ for i = 1,3 do
   grid_pat_quantize_events[i] = {}
 end
 
---[[
-grid_pat_quantizer = {}
-for i = 1,3 do
-  grid_pat_quantizer[i] = {}
-  grid_pat_quantizer[i] = metro.init()
-  grid_pat_quantizer[i].time = 0.25
-  grid_pat_quantizer[i].count = -1
-  --grid_pat_quantizer[i].event = function() grid_pat_q_clock(i) end
-  grid_pat_quantizer[i].event = function() end
-  grid_pat_quantizer[i]:start()
-end
---]]
-
 function cheat_clock_synced(i)
-  if #quantize_events[i] > 0 then
-    for k,e in pairs(quantize_events[i]) do
-      cheat(i,e)
-      grid_p[i] = {}
-      grid_p[i].action = "pads"
-      grid_p[i].i = i
-      grid_p[i].id = selected[i].id
-      grid_p[i].x = selected[i].x
-      grid_p[i].y = selected[i].y
-      grid_p[i].rate = bank[i][bank[i].id].rate
-      grid_p[i].pause = bank[i][bank[i].id].pause
-      grid_p[i].start_point = bank[i][bank[i].id].start_point
-      grid_p[i].end_point = bank[i][bank[i].id].end_point
-      grid_p[i].rate_adjusted = false
-      grid_p[i].loop = bank[i][bank[i].id].loop
-      grid_p[i].mode = bank[i][bank[i].id].mode
-      grid_p[i].clip = bank[i][bank[i].id].clip
-      grid_pat[i]:watch(grid_p[i])
-    end
+  if quantize_events[i].bank ~= nil then
+    cheat(quantize_events[i].bank,quantize_events[i].pad)
     quantize_events[i] = {}
   end
 end
@@ -440,6 +425,7 @@ local snakes =
 }
 
 function random_grid_pat(which,mode)
+  print(mode)
 
   local pattern = grid_pat[which]
 
@@ -483,7 +469,7 @@ function random_grid_pat(which,mode)
   elseif mode == 3 then
     local auto_pat = params:get("random_patterning_"..which)
     if auto_pat ~= 1 then
-      params:set("pattern_"..which.."_quantization", 2)
+      -- params:set("pattern_"..which.."_quantization", 2)
       local vals_to_dur = {4,8,16,32,64,math.random(4,32)}
       local note_val = params:get("rand_pattern_"..which.."_note_length")
       pattern.rec_clock_time = vals_to_dur[note_val]
@@ -718,22 +704,6 @@ function table.clone(org)
   return {table.unpack(org)}
 end
 
-function calc_rec_clock_time(target)
-  local total_time = 0
-  for i = 1,#grid_pat[target].time_beats do
-    total_time = total_time + grid_pat[target].time_beats[i]
-  end
-  grid_pat[target].rec_clock_time = util.round(total_time)
-end
-
-function unpack_quantized_table(target)
-  for i = 1,#quantized_grid_pat[target].event do
-    grid_pat[target].quantum[i] = #quantized_grid_pat[target].event[i] * 0.25
-    grid_pat[target].time_beats[i] = grid_pat[target].time[i] / clock.get_beat_sec()
-  end
-  calc_rec_clock_time(target)
-end
-
 function midi_clock_linearize(bank)
   quantized_grid_pat[bank].event = {}
   for i = 1,grid_pat[bank].count do
@@ -860,6 +830,7 @@ zilch_leds =
 
 function init()
 
+  engine.release(0.1)
   amp_in = {}
   local amp_src = {"amp_in_l","amp_in_r"}
   for i = 1,2 do
@@ -922,8 +893,8 @@ function init()
     rec[i].queued = false
   end
 
-  params:add_group("GRID",5)
-  params:add_option("LED_style","LED style",{"varibright","4-step","grayscale"},1)
+  params:add_group("GRID/ARC",6)
+  params:add_option("LED_style","grid LED style",{"varibright","4-step","grayscale"},1)
   params:set_action("LED_style",
   function()
     grid_dirty = true
@@ -966,6 +937,16 @@ function init()
       persistent_state_save()
     end
   end)
+  params:add_option("arc_size","arc size (64-grid only)",{4,2},1)
+  params:set_action("arc_size",
+    function(x)
+      if x == 2 then
+        params:set("grid_size",2)
+      end
+      if all_loaded then
+        persistent_state_save()
+      end
+    end)
 
   -- params:add_separator("hotkey config")
 
@@ -995,7 +976,7 @@ function init()
   
   params:add_separator("cheat codes params")
   
-  params:add_group("collections",8)
+  params:add_group("collections (load/save)",8)
   params:add_separator("load/save")
   params:add_trigger("load", "load collection")
   params:set_action("load",
@@ -1277,7 +1258,7 @@ function init()
   end
 
   page.transport = {}
-  page.transport.foci = {"TRANSPORT","TAP-TEMPO"}
+  page.transport.foci = {"TRANSPORT","TAP","CLICK"}
   page.transport.focus = "TRANSPORT"
   
   del.init()
@@ -1991,6 +1972,9 @@ function init()
 
   speed_dial:init()
 
+  audio.level_eng_cut(util.dbamp(-math.huge))
+  norns.state.mix.cut_input_eng = -math.huge
+  clock.run(metronome_audio)
 end
 
 ---
@@ -2135,7 +2119,7 @@ function alt_synced_loop(target,state)
   if transport.is_running then
     if state == "restart" then
       clock.sync(params:get("launch_quantization") == 1 and 1 or 4)
-      print("restarting")
+      print("restarting", clock.get_beats())
     end
     -- clear_arps_from_pattern_restart(target.event[target.count].i)
     target:start()
@@ -2213,7 +2197,7 @@ end
 function synced_record_start(target,i)
   --midi_pat[i].sync_hold = true
   target.sync_hold = true
-  clock.sync(4)
+  clock.sync(4,-1/16)
   --midi_pat[i]:rec_start()
   target:rec_start()
   --midi_pat[i].sync_hold = false
@@ -2223,11 +2207,11 @@ function synced_record_start(target,i)
   elseif target == grid_pat[i] then
     grid_pattern_watch(i, "pause")
   end
-  clock.run(synced_pattern_record,target)
+  grid_pat[i].synced_pat_clock = clock.run(synced_pattern_record,target)
 end
 
 function synced_pattern_record(target)
-  clock.sleep(clock.get_beat_sec()*target.rec_clock_time)
+  clock.sleep((clock.get_beat_sec()*target.rec_clock_time)+ (clock.get_beat_sec()*1/16))
   if target.rec_clock ~= nil then
     target:rec_stop()
     -- if target is a grid pat, should do all the grid pat thing:
@@ -2260,6 +2244,7 @@ function synced_pattern_record(target)
         target:calculate_quantum(i)
       end
     end
+    target.time[1] = target.time[1] - (clock.get_beat_sec()*1/16)
     if target.count > 0 then -- just in case the recording was canceled...
       --target:start()
       print("started first run..."..clock.get_beats())
@@ -2365,7 +2350,7 @@ end
 
 function pad_clock()
   while true do
-    clock.sync(1)
+    clock.sync(1/4)
     for i = 1,3 do
       cheat_clock_synced(i)
     end
@@ -2561,6 +2546,16 @@ function globally_clocked()
     for i = 1,3 do
       if grid_pat[i].tightened_start == 1 then
         internal_clocking_tightened(i)
+      end
+    end
+    if grid_page_64 == 2 then
+      grid_blink_64 = math.fmod(clock.get_beats(),1)
+      if grid_blink_64 <= 0.25 then
+        show_me_grid_blink = true
+        grid_dirty = true
+      else
+        show_me_grid_blink = false
+        grid_dirty = true
       end
     end
     -- print("butts")
@@ -4140,6 +4135,9 @@ end
 g = grid.connect()
 
 function get_grid_connected()
+  if grid.is_midigrid ~= nil and grid.is_midigrid == true then
+    params:set("midigrid?",2)
+  end
   if g.device == nil and grid == nil then
     return false
   elseif g.device ~= nil or (grid ~= nil and params:string("midigrid?") == "yes") then
@@ -4840,7 +4838,7 @@ function grid_redraw()
       if grid_page_64 == 0 then
 
         for x = 1,3 do
-          g:led(x,1,x == bank_64 and 12 or 4)
+          g:led(x,1,x == bank_64 and 15 or 4)
         end
 
         --arc recorders
@@ -4879,7 +4877,11 @@ function grid_redraw()
         --pattern rec
         local target = grid_pat[bank_64]
         if target.rec == 1 then
-          g:led(8,5,(9*target.led))
+          if edition == 3 then
+            g:led(8,5,(15*target.led))
+          else
+            g:led(8,5,(9*target.led))
+          end
         elseif (target.quantize == 0 and target.play == 1) or (target.quantize == 1 and target.tightened_start == 1) then
           if target.overdub == 0 then
             g:led(8,5,9)
@@ -5136,7 +5138,33 @@ function grid_redraw()
             end
           end
         end
+        g:led(1,8,(grid_alt and led_maps["alt_on"][edition] or led_maps["alt_off"][edition]))
 
+      elseif grid_page_64 == 2 then
+        for i = 1,8 do
+          for j = 1,3 do
+            if pattern_saver[j].saved[i] == 1 then
+              if params:string("LED_style") == "grayscale" then
+                g:led(i,j+1,15)
+              else
+                g:led(i,j+1,8)
+              end
+            else
+              g:led(i,j+1,4)
+            end
+            if pattern_saver[j].load_slot == i then
+              if params:string("LED_style") == "grayscale" then
+                g:led(i,j+1,show_me_grid_blink and 15 or 0)
+              else
+                g:led(i,j+1,15)
+              end
+            end
+          end
+        end
+        g:led(1,8,(grid_alt and led_maps["alt_on"][edition] or led_maps["alt_off"][edition]))
+        for i = 1,3 do
+          g:led(i,6,params:get("bank level "..i) > 0 and 15 or 0)
+        end
       end
       
       g:refresh()
@@ -5174,7 +5202,12 @@ function grid_pattern_execute(entry)
           end
         end
         if rytm.track[i].k == 0 then
-          cheat(i,bank[i].id)
+          -- cheat(i,bank[i].id)
+          if bank[i].quantize_press == 0 then
+            cheat(i, bank[i].id)
+          else
+            quantize_events[i] = {["bank"] = i, ["pad"] = bank[i].id}
+          end
         end
       elseif string.match(entry.action, "zilchmo") then
         if params:get("zilchmo_patterning") == 2 then
@@ -5323,38 +5356,37 @@ end
 arc_redraw = function()
   a:all(0)
   local which_pad = nil
-  for i = 1,3 do
-    if bank[arc_control[i]].focus_hold == false then
-      which_pad = bank[arc_control[i]].id
-    else
-      which_pad = bank[arc_control[i]].focus_pad
+  local this_bank;	
+  local arc_min;	
+  local arc_max;	
+  for i = 1,(params:string("arc_size") == 4 and 3 or 1) do	
+    i = (params:string("arc_size") == 4 and i or bank_64)	
+    local which_enc = params:string("arc_size") == 4 and i or 1	
+    if bank[i].focus_hold == false then	
+      which_pad = bank[i].id	
+    else	
+      which_pad = bank[i].focus_pad	
     end
 
     local duration = bank[i][which_pad].mode == 1 and 8 or clip[bank[i][which_pad].clip].sample_length
     if arc_param[i] == 1 then
-      -- if start_to_led <= end_to_led then
-      --   a:segment(i, util.linlin(0, duration, tau*(1/4), tau*1.23, start_to_led), util.linlin(0, duration, (tau*(1/4))+0.1, tau*1.249999, end_to_led), 15)
-      -- else
-      --   a:segment(i, util.linlin(0, duration, (tau*(1/4))+0.1, tau*1.23, end_to_led), util.linlin(0, duration, tau*(1/4), tau*1.249999, start_to_led), 15)
-      -- end
 
       local minimum = bank[i][which_pad].mode == 1 and live[bank[i][which_pad].clip].min or clip[bank[i][which_pad].clip].min
       local maximum = bank[i][which_pad].mode == 1 and live[bank[i][which_pad].clip].max or clip[bank[i][which_pad].clip].max
-      local start_to_led = bank[arc_control[i]][which_pad].start_point
-      local end_to_led = bank[arc_control[i]][which_pad].end_point
-      a:segment(i, util.linlin(minimum, maximum, tau*(1/4), tau*1.23, start_to_led), util.linlin(minimum, maximum, (tau*(1/4))+0.1, tau*1.249999, end_to_led), 15)
-      -- DOES THERE NEED TO BE AN ELSE CASE TO START < = END ???
+      local start_to_led = bank[i][which_pad].start_point
+      local end_to_led = bank[i][which_pad].end_point
+      a:segment(which_enc, util.linlin(minimum, maximum, tau*(1/4), tau*1.23, start_to_led), util.linlin(minimum, maximum, (tau*(1/4))+0.1, tau*1.249999, end_to_led), 15)
 
     end
     if arc_param[i] == 2 or arc_param[i] == 3 then
       local minimum = bank[i][which_pad].mode == 1 and live[bank[i][which_pad].clip].min or clip[bank[i][which_pad].clip].min
       local maximum = bank[i][which_pad].mode == 1 and live[bank[i][which_pad].clip].max or clip[bank[i][which_pad].clip].max
-      local start_to_led = math.floor(util.linlin(minimum,maximum,1,64,bank[arc_control[i]][which_pad].start_point))
-      local end_to_led = math.floor(util.linlin(minimum,maximum,1,64,bank[arc_control[i]][which_pad].end_point))
+      local start_to_led = math.floor(util.linlin(minimum,maximum,1,64,bank[i][which_pad].start_point))
+      local end_to_led = math.floor(util.linlin(minimum,maximum,1,64,bank[i][which_pad].end_point))
       local playhead_to_led = util.linlin(minimum,maximum,1,64,poll_position_new[i+1])
-      a:led(i,(math.floor(playhead_to_led))+16,5)
-      a:led(i, arc_param[i] == 2 and (start_to_led+16) or (end_to_led+17),15)
-      a:led(i, arc_param[i] == 2 and (end_to_led+17) or (start_to_led+16),8)
+      a:led(which_enc,(math.floor(playhead_to_led))+16,5)
+      a:led(which_enc, arc_param[i] == 2 and (start_to_led+16) or (end_to_led+17),15)
+      a:led(which_enc, arc_param[i] == 2 and (end_to_led+17) or (start_to_led+16),8)
 
     end
     if arc_param[i] == 4 then
@@ -5367,21 +5399,21 @@ arc_redraw = function()
       end
       if tilt_to_led == nil then
         tilt_to_led = bank[i][which_pad].tilt
-        a:led(i,47,5)
-        a:led(i,48,10)
-        a:led(i,49,15)
-        a:led(i,50,10)
-        a:led(i,51,5)
+        a:led(which_enc,47,5)
+        a:led(which_enc,48,10)
+        a:led(which_enc,49,15)
+        a:led(which_enc,50,10)
+        a:led(which_enc,51,5)
       elseif tilt_to_led >= -0.04 and tilt_to_led <=0.20 then
-        a:led(i,47,5)
-        a:led(i,48,10)
-        a:led(i,49,15)
-        a:led(i,50,10)
-        a:led(i,51,5)
+        a:led(which_enc,47,5)
+        a:led(which_enc,48,10)
+        a:led(which_enc,49,15)
+        a:led(which_enc,50,10)
+        a:led(which_enc,51,5)
       elseif tilt_to_led < -0.04 then
-        a:segment(i, tau*(1/4), util.linlin(-1, 1, (tau*(1/4))+0.1, tau*1.249999, tilt_to_led), 15)
+        a:segment(which_enc, tau*(1/4), util.linlin(-1, 1, (tau*(1/4))+0.1, tau*1.249999, tilt_to_led), 15)
       elseif tilt_to_led > 0.20 then
-        a:segment(i, util.linlin(-1, 1, (tau*(1/4)), (tau*1.24)+0.4, tilt_to_led-0.1), tau*(1/4)+0.1, 15)
+        a:segment(which_enc, util.linlin(-1, 1, (tau*(1/4)), (tau*1.24)+0.4, tilt_to_led-0.1), tau*(1/4)+0.1, 15)
       end
     end
     if arc_param[i] == 5 then
@@ -5392,21 +5424,21 @@ arc_redraw = function()
         level_to_led = bank[i][bank[i].id].level
       end
       for j = 1,17 do
-        a:led(i,(math.floor(util.linlin(0,2,5,70,(level_to_led)-(1/8*j))))+16,15)
+        a:led(which_enc,(math.floor(util.linlin(0,2,5,70,(level_to_led)-(1/8*j))))+16,15)
       end
     end
     if arc_param[i] == 6 then
       local pan_to_led = bank[i][bank[i].id].pan
-      a:led(i,(math.floor(util.linlin(-1,1,10,55,pan_to_led)))+22,4)
-      a:led(i,(math.floor(util.linlin(-1,1,10,55,pan_to_led)))+17,15)
-      a:led(i,(math.floor(util.linlin(-1,1,10,55,pan_to_led)))+12,4)
+      a:led(which_enc,(math.floor(util.linlin(-1,1,10,55,pan_to_led)))+22,4)
+      a:led(which_enc,(math.floor(util.linlin(-1,1,10,55,pan_to_led)))+17,15)
+      a:led(which_enc,(math.floor(util.linlin(-1,1,10,55,pan_to_led)))+12,4)
     end
   end
 
   arc_meta_level = {}
   for i = 1,6 do
     arc_meta_level[i] = util.round(arc_meta_focus) == i and 15 or 5
-    a:led(4,((i-1)*8)+25,arc_meta_level[i])
+    a:led((params:string("arc_size") == 4 and 4 or 2),((i-1)*8)+25,arc_meta_level[i])
   end
 
   a:refresh()
@@ -5474,6 +5506,10 @@ function persistent_state_save()
     io.write(i.."_pad_to_jf_pulse: "..params:get(i.."_pad_to_jf_pulse").."\n")
   end
   io.write("touchosc_echo: "..params:get("touchosc_echo").."\n")
+  io.write("arc_size: "..params:get("arc_size").."\n")
+  for i = 1,3 do
+    io.write("pattern_"..i.."_quantization: "..params:get("pattern_"..i.."_quantization").."\n")
+  end
   io.close(file)
 end
 
@@ -5680,6 +5716,10 @@ function named_savestate(text)
   if file then
     io.output(file)
     io.write("clock_tempo: "..params:get("clock_tempo").."\n")
+    for i = 1,3 do
+      io.write("pattern_"..i.."_playmode: "..grid_pat[i].playmode.."\n")
+      io.write("pattern_"..i.."_rec_clock_time: "..grid_pat[i].rec_clock_time.."\n")
+    end
     io.close(file)
   end
 
@@ -5845,7 +5885,7 @@ function named_loadstate(path)
     if selected_coll ~= collection then
       meta_shadow(selected_coll)
     elseif selected_coll == collection then
-      cleanup()
+      cleanup("local")
     end
     one_point_two()
     -- / GRID pattern restore
@@ -5862,11 +5902,31 @@ function named_loadstate(path)
       end
     end
 
-    --TODO confirm this is ok, not a namespace collision?
     local file = io.open(_path.data .. "cheat_codes_2/collection-"..selected_coll.."/misc/misc.data", "r")
     if file then
       io.input(file)
-      params:set("clock_tempo", tonumber(string.match(io.read(), ': (.*)')))
+      local number_of_lines = 0
+      for lines in file:lines() do
+        number_of_lines = number_of_lines+1
+      end
+      io.close(file)
+      file = io.open(_path.data .. "cheat_codes_2/collection-"..selected_coll.."/misc/misc.data", "r")
+      io.input(file)
+      if number_of_lines == 1 then
+        params:set("clock_tempo", tonumber(string.match(io.read(), ': (.*)')))
+      else
+        params:set("clock_tempo", tonumber(string.match(io.read(), ': (.*)')))
+        for i = 1,3 do
+          local playmode = tonumber(string.match(io.read(), ': (.*)'))
+          if playmode ~= nil then
+            grid_pat[i].playmode = playmode
+          end
+          local rec_clock_time = tonumber(string.match(io.read(), ': (.*)'))
+          if rec_clock_time ~= nil then
+            grid_pat[i].rec_clock_time = rec_clock_time
+          end
+        end
+      end
       io.close(file)
     end
 
@@ -5897,49 +5957,69 @@ function named_loadstate(path)
   --     end
   --   end
   -- )
+  -- pre_script_softcut_engine_level = params:get("cut_input_eng")
+  audio.level_eng_cut(util.dbamp(-math.huge))
+  norns.state.mix.cut_input_eng = -math.huge
 
 end
 
-function test_save(i)
-  pattern_saver[i].active = true
-  clock.sleep(1)
-  -- if pattern_saver[i].active then
-    if not grid_alt then
-      if grid_pat[i].count > 0 and grid_pat[i].rec == 0 then
-        copy_entire_pattern(i)
-        save_pattern(i,pattern_saver[i].save_slot+8*(i-1),"pattern")
-        pattern_saver[i].saved[pattern_saver[i].save_slot] = 1
-        pattern_saver[i].load_slot = pattern_saver[i].save_slot
-        g:led(math.floor((i-1)*5)+1,9-pattern_saver[i].save_slot,15)
-        -- g:refresh()
-      elseif #arp[i].notes > 0 then
-        save_pattern(i,pattern_saver[i].save_slot+8*(i-1),"arp")
-        pattern_saver[i].saved[pattern_saver[i].save_slot] = 1
-        pattern_saver[i].load_slot = pattern_saver[i].save_slot
-        g:led(math.floor((i-1)*5)+1,9-pattern_saver[i].save_slot,15)
-        -- g:refresh()
-      else
-        print("no pattern data to save")
-        g:led(math.floor((i-1)*5)+1,9-pattern_saver[i].save_slot,0)
-        -- g:refresh()
-      end
-      pattern_saver[i].clock = nil
-      grid_dirty = true
-    else
-      if pattern_saver[i].saved[pattern_saver[i].save_slot] == 1 then
-        delete_pattern(pattern_saver[i].save_slot+8*(i-1))
-        pattern_saver[i].saved[pattern_saver[i].save_slot] = 0
-        pattern_saver[i].load_slot = 0
-      else
-        print("no pattern data to delete")
-      end
+function quick_save_pattern(i)
+  if grid_pat[i].count > 0 and grid_pat[i].rec == 0 then
+    copy_entire_pattern(i)
+    save_pattern(i,pattern_saver[i].save_slot+8*(i-1),"pattern")
+    pattern_saver[i].saved[pattern_saver[i].save_slot] = 1
+    pattern_saver[i].load_slot = pattern_saver[i].save_slot
+    if params:string("grid_size") == "128" then
+      g:led(math.floor((i-1)*5)+1,9-pattern_saver[i].save_slot,15)
     end
-  -- end
+    -- g:refresh()
+  elseif #arp[i].notes > 0 then
+    save_pattern(i,pattern_saver[i].save_slot+8*(i-1),"arp")
+    pattern_saver[i].saved[pattern_saver[i].save_slot] = 1
+    pattern_saver[i].load_slot = pattern_saver[i].save_slot
+    if params:string("grid_size") == "128" then
+      g:led(math.floor((i-1)*5)+1,9-pattern_saver[i].save_slot,15)
+    end
+    -- g:refresh()
+  else
+    print("no pattern data to save")
+    if params:string("grid_size") == "128" then
+      g:led(math.floor((i-1)*5)+1,9-pattern_saver[i].save_slot,0)
+    end
+    -- g:refresh()
+  end
+  pattern_saver[i].clock = nil
+  grid_dirty = true
+end
+
+function quick_delete_pattern(i)
+  if pattern_saver[i].saved[pattern_saver[i].save_slot] == 1 then
+    delete_pattern(pattern_saver[i].save_slot+8*(i-1))
+    pattern_saver[i].saved[pattern_saver[i].save_slot] = 0
+    pattern_saver[i].load_slot = 0
+  else
+    print("no pattern data to delete")
+  end
+end
+
+function test_save(i)
+  clock.sleep(0.25)
+  pattern_saver[i].active = true
+  if pattern_saver[i].active then
+    if not grid_alt then
+      quick_save_pattern(i)
+    else
+      quick_delete_pattern(i)
+    end
+  end
   pattern_saver[i].active = false
 end
 
 function test_load(slot,destination)
   if pattern_saver[destination].saved[slot-((destination-1)*8)] == 1 then
+    if pattern_saver[destination].load_slot ~= slot-((destination-1)*8) then
+      pattern_saver[destination].load_slot = slot-((destination-1)*8)
+    end
     if grid_pat[destination].play == 1 then
       grid_pat[destination]:clear()
     elseif arp[destination].playing then
@@ -6109,7 +6189,7 @@ function one_point_two()
     if file then
       io.input(file)
       local current = math.floor((i-1)/8)+1
-      load_pattern(i,current)
+      -- load_pattern(i,current,"fromonepoint")
       io.close(file)
     end
   end
@@ -6257,13 +6337,16 @@ function meta_copy_coll(read_coll,write_coll)
   end
 end
 
-function load_pattern(slot,destination)
+function load_pattern(slot,destination,print_also)
+  if print_also then
+    print(print_also,slot,destination)
+  end
   local ignore_external_timing = false
   local file = io.open(_path.data .. "cheat_codes_2/collection-"..selected_coll.."/patterns/"..slot..".data", "r")
   if file then
     io.input(file)
     if io.read() == "stored pad pattern: collection "..selected_coll.." + slot "..slot then
-      print("loading grid pat")
+      -- print("loading grid pat")
       grid_pat[destination].event = {}
       grid_pat[destination].count = tonumber(io.read())
       for i = 1,grid_pat[destination].count do
@@ -6398,9 +6481,12 @@ function load_pattern(slot,destination)
   end
 end
 
-function cleanup()
+function cleanup(is_local)
 
-  metro[31].time = 0.25
+  if is_local == nil then
+    metro[31].time = 0.25
+    print("cleaning up")
+  end
 
   for i = 1,3 do
     env_counter[i]:stop()
