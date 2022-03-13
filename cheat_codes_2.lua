@@ -7,6 +7,8 @@
 -- l.llllllll.co/cheat-codes-2
 -- -------------------------------
 
+--test
+
 if util.file_exists(_path.code.."passthrough") then
   local passthru = include 'passthrough/lib/passthrough'
   passthru.init()
