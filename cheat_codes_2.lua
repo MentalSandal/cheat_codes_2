@@ -8,6 +8,7 @@
 -- -------------------------------
 
 --test
+--test
 
 if util.file_exists(_path.code.."passthrough") then
   local passthru = include 'passthrough/lib/passthrough'
