@@ -314,20 +314,24 @@ function encoder_actions.init(n,d)
     elseif menu == 8 then
       if not key1_hold then
         if rytm.screen_focus == "right" then
-          rytm.track[rytm.track_edit].rotation = util.clamp(rytm.track[rytm.track_edit].rotation + d, 0, 16)
-          rytm.track[rytm.track_edit].s = rytm.rotate_pattern(rytm.track[rytm.track_edit].s, rytm.track[rytm.track_edit].rotation)
+          -- rytm.track[rytm.track_edit].rotation = util.clamp(rytm.track[rytm.track_edit].rotation + d, 0, 16)
+          -- rytm.track[rytm.track_edit].s = rytm.rotate_pattern(rytm.track[rytm.track_edit].s, rytm.track[rytm.track_edit].rotation)
+          params:delta("euclid_rotation_"..rytm.track_edit,d)
         else
-          rytm.track[rytm.track_edit].k = util.clamp(rytm.track[rytm.track_edit].k+d,0,rytm.track[rytm.track_edit].n)
+          params:delta("euclid_pulses_"..rytm.track_edit,d)
+          -- rytm.track[rytm.track_edit].k = util.clamp(rytm.track[rytm.track_edit].k+d,0,rytm.track[rytm.track_edit].n)
         end
       elseif key1_hold then
         if rytm.screen_focus == "left" then
-          if d > 0 then
-            rytm.track[rytm.track_edit].mode = "span"
-          elseif d < 0 then
-            rytm.track[rytm.track_edit].mode = "single"
-          end
+          -- if d > 0 then
+          --   rytm.track[rytm.track_edit].mode = "span"
+          -- elseif d < 0 then
+          --   rytm.track[rytm.track_edit].mode = "single"
+          -- end
+          params:delta("euclid_mode_"..rytm.track_edit,d)
         else
-          rytm.track[rytm.track_edit].auto_rotation = util.clamp(rytm.track[rytm.track_edit].auto_rotation + d, 0, 16)
+          params:delta("euclid_auto_rotation_"..rytm.track_edit,d)
+          -- rytm.track[rytm.track_edit].auto_rotation = util.clamp(rytm.track[rytm.track_edit].auto_rotation + d, 0, 16)
         end
       end
     elseif menu == 9 then
@@ -583,7 +587,13 @@ function encoder_actions.init(n,d)
       local page_line = page.time_page_sel
       local pattern_page = page.time_sel
       -- local pattern = g.device ~= nil and grid_pat[pattern_page] or midi_pat[pattern_page]
-      local pattern = get_grid_connected() and grid_pat[pattern_page] or midi_pat[pattern_page]
+      local pattern
+
+      if get_grid_connected() or osc_communication then
+        pattern = grid_pat[pattern_page]
+      else
+        pattern =  midi_pat[pattern_page]
+      end
       
       if pattern_page < 4 then
         if page_line[pattern_page] == 7 then
@@ -652,20 +662,24 @@ function encoder_actions.init(n,d)
     elseif menu == 8 then
       if not key1_hold then
         if rytm.screen_focus == "right" then
-          rytm.track[rytm.track_edit].pad_offset = util.clamp(rytm.track[rytm.track_edit].pad_offset+d,-15,15)
+          -- rytm.track[rytm.track_edit].pad_offset = util.clamp(rytm.track[rytm.track_edit].pad_offset+d,-15,15)
+          params:delta("euclid_pad_offset_"..rytm.track_edit,d)
         else
-          rytm.track[rytm.track_edit].n = util.clamp(rytm.track[rytm.track_edit].n+d,1,16)
-          rytm.track[rytm.track_edit].k = util.clamp(rytm.track[rytm.track_edit].k,0,rytm.track[rytm.track_edit].n)
+          -- rytm.track[rytm.track_edit].n = util.clamp(rytm.track[rytm.track_edit].n+d,1,16)
+          -- rytm.track[rytm.track_edit].k = util.clamp(rytm.track[rytm.track_edit].k,0,rytm.track[rytm.track_edit].n)
+          params:delta("euclid_duration_"..rytm.track_edit,d)
         end
       elseif key1_hold then
         if rytm.screen_focus == "left" then
-          local deci = {"0.25","0.5","1","2","4"}
-          local lookup = string.format("%.4g",rytm.track[rytm.track_edit].clock_div)
-          local current = (tab.key(deci, lookup))
-          local new_value = util.clamp(current+d,1,#deci)
-          rytm.track[rytm.track_edit].clock_div = tonumber(deci[new_value])
+          -- local deci = {"0.25","0.5","1","2","4"}
+          -- local lookup = string.format("%.4g",rytm.track[rytm.track_edit].clock_div)
+          -- local current = (tab.key(deci, lookup))
+          -- local new_value = util.clamp(current+d,1,#deci)
+          -- rytm.track[rytm.track_edit].clock_div = tonumber(deci[new_value])
+          params:delta("euclid_clock_div_"..rytm.track_edit,d)
         else
-          rytm.track[rytm.track_edit].auto_pad_offset = util.clamp(rytm.track[rytm.track_edit].auto_pad_offset+d,-15,15)
+          -- rytm.track[rytm.track_edit].auto_pad_offset = util.clamp(rytm.track[rytm.track_edit].auto_pad_offset+d,-15,15)
+          params:delta("euclid_auto_offset_"..rytm.track_edit,d)
         end
       end
 
@@ -686,18 +700,19 @@ function encoder_actions.init(n,d)
         , ["2.6667"] = 10  -- 1T
         , ["4.0"] = 11 -- 1
         }
-        local rounded = util.round(focus_arp.time,0.0001)
+        local rounded = arp[page.arp_page_sel].alt and util.round(bank[id][bank[id].id].arp_time,0.0001) or util.round(focus_arp.time,0.0001)
         local working = deci_to_int[tostring(rounded)]
         working = util.clamp(working+d,1,11)
         local int_to_deci = {0.125,1/6,0.25,1/3,0.5,2/3,1,4/3,2,8/3,4}
-        if page.arp_alt[page.arp_page_sel] then
+        if arp[page.arp_page_sel].alt then
           bank[page.arp_page_sel][bank[page.arp_page_sel].id].arp_time = int_to_deci[working]
           focus_arp.time = bank[page.arp_page_sel][bank[page.arp_page_sel].id].arp_time
         else
-          focus_arp.time = int_to_deci[working]
-          for i = 1,16 do
-            bank[page.arp_page_sel][i].arp_time = focus_arp.time
-          end
+          -- focus_arp.time = int_to_deci[working]
+          -- for i = 1,16 do
+          --   bank[page.arp_page_sel][i].arp_time = focus_arp.time
+          -- end
+          params:delta("arp_"..page.arp_page_sel.."_rate",d)
         end
       elseif page.arp_param[id] == 2 then
         local dir_to_int =

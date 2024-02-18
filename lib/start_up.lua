@@ -1,5 +1,7 @@
 start_up = {}
 
+local frm = require 'formatters'
+
 function start_up.init()
   
   softcut.buffer_clear()
@@ -74,21 +76,72 @@ function start_up.init()
   softcut.enable(6, 1)
   
   --params:add_separator()
+
+  local banks = {"(a)","(b)","(c)"}
   
-  params:add_group("loops + buffers", 29)
+  params:add_group("loops + buffers", util.file_exists(_path.code.."zxcvbn/lib/aubiogo/aubiogo") and 48 or 42)
 
   params:add_separator("clips")
   
   for i = 1,3 do
     params:add_file("clip "..i.." sample", "clip "..i.." sample")
     params:set_action("clip "..i.." sample", function(file) load_sample(file,i) end)
-  end
+    if util.file_exists(_path.code.."zxcvbn/lib/aubiogo/aubiogo") then
+      params:add{
+        type = "trigger",
+        id = "detect_onsets_"..i,
+        name = "detect onsets in clip "..i.." [K3]",
+        action = function()
+          if params:get('clip '..i..' sample') ~= '-' and params:get('clip '..i..' sample') ~= _path.audio then
+            _norns.key(1,1)
+            _norns.key(1,0)
+            detect_onsets(i,params:get('clip '..i..' sample'))
+          end
+        end
+      }
 
+      params:add{
+        type = "trigger",
+        id = "clear_onsets_"..i,
+        name = "clear onsets from clip "..i.." [K3]",
+        action = function()
+          params:show('detect_onsets_'..i)
+          params:hide("clear_onsets_"..i)
+          _menu.rebuild_params()
+          cursors[i] = {}
+        end
+      }
+      params:hide("detect_onsets_"..i)
+      params:hide("clear_onsets_"..i)
+      _menu.rebuild_params()
+    end
+  end
+  
   for i = 1,3 do
     params:add{type = "trigger", id = "save_buffer"..i, name = "save live buffer "..i.." [K3]", action = function() save_sample(i) end}	
   end
 
   params:add_separator("live")
+
+  for i = 1,2 do
+    params:add_control("incoming_level_"..i, (i == 1 and "(L)" or "(R)").." incoming audio level", controlspec.new(0,2,'lin',0.1,1,""))
+    params:set_action("incoming_level_"..i, function(x)
+      for j = 1,4 do
+        softcut.level_input_cut(i,j,x)
+      end
+    end)
+  end
+  
+  for i = 2, 4 do
+    params:add_control(
+      "bank_" .. (banks[i-1]) .. "_to_live",
+      "bank " .. (banks[i-1]) .. " to live: level",
+      controlspec.new(0, 2, "lin", 0.1, 0, "")
+    )
+    params:set_action("bank_" .. (banks[i-1]) .. "_to_live", function(x)
+      softcut.level_cut_cut(i, 1, x)
+    end)
+  end
 
   for i = 1,3 do
     -- params:add_option("rec_loop_"..i, "live "..i.." rec behavior", {"loop","1-shot","SOS"}, 1)
@@ -130,6 +183,7 @@ function start_up.init()
     end
   )
   params:add_control("one_shot_threshold","----> thresh",controlspec.new(1,1000,'exp',1,85,'amp/10k'))
+  params:add_option("one_shot_punch","--> 1-shot 'off' sets loop",{"no","yes"},1)
   params:add_control("one_shot_latency_offset","--> latency offset",controlspec.new(0,1,'lin',0.01,0,'s'))
 
   params:add_option("rec_loop_enc_resolution", "rec loop enc resolution", {"0.1","0.01","1/16","1/8","1/4","1/2","1 bar"}, 1)
@@ -176,31 +230,18 @@ function start_up.init()
     local rate_offset = {0,-12,-24}
     params:set("offset",rate_offset[x])
   end)
+
+  for i = 1,3 do
+    params:add_option("live_purge_resets_loop_"..i, "purge resets loop "..i.."?", {"no","yes"}, 1)
+  end
   
   for i = 1,3 do
     params:add_control("random_rec_clock_prob_"..i, "rand rec "..i.." probability", controlspec.new(0, 100, 'lin', 1, 0, "%"))
   end
 
-  params:add_separator("global")
-
-  params:add_control("offset", "global pitch offset", controlspec.new(-24, 24, 'lin', 1, 0, "st"))
-  params:set_action("offset",
-    function(value)
-      for i=1,3 do
-        for j = 1,16 do
-          bank[i][j].offset = math.pow(0.5, -value / 12)
-        end
-        if bank[i][bank[i].id].pause == false then
-          softcut.rate(i+1, bank[i][bank[i].id].rate*bank[i][bank[i].id].offset)
-        end
-      end
-    end
-  )
-  
-  loop_enc_resolution = {}
-  local banks = {"(a)","(b)","(c)"}
+  params:add_separator("banks")
   for i = 1,3 do
-    params:add_option("loop_enc_resolution_"..i, "loops enc resolution "..banks[i], {"0.1","0.01","1/16","1/8","1/4","1/2","1 bar"}, 1)
+    params:add_option("loop_enc_resolution_"..i, "enc resolution "..banks[i], {"0.1","0.01","1/16","1/8","1/4","1/2","1 bar"}, 1)
     params:set_action("loop_enc_resolution_"..i, function(x)
       local resolutions =
       { [1] = 10
@@ -226,6 +267,27 @@ function start_up.init()
       end
     end)
   end
+  for i = 1,3 do
+    params:add_control("loop_fade_time_"..i, "fade time "..banks[i], controlspec.new(0, 10, 'lin', 0.1, 10, "ms"))
+  end
+
+
+  params:add_separator('bank_global_separator',"global")
+  loop_enc_resolution = {}
+
+  params:add_control("offset", "global pitch offset", controlspec.new(-24, 24, 'lin', 1, 0, "st"))
+  params:set_action("offset",
+    function(value)
+      for i=1,3 do
+        for j = 1,16 do
+          bank[i][j].offset = math.pow(0.5, -value / 12)
+        end
+        if bank[i][bank[i].id].pause == false then
+          softcut.rate(i+1, bank[i][bank[i].id].rate*bank[i][bank[i].id].offset)
+        end
+      end
+    end
+  )
 
   params:add_option("preview_clip_change", "preview clip changes?", {"yes","no"},1)
   params:set_action("preview_clip_change", function() if all_loaded then persistent_state_save() end end)
@@ -234,27 +296,30 @@ function start_up.init()
   
   --params:add_option("zilchmo_bind_rand","bind random zilchmo?", {"no","yes"}, 1)
   
-  params:add_group("timing + patterns + arps",27)
+  params:add_group("timing + patterns + arps",45)
   params:add_separator("quantization")
   for i = 1,3 do
     params:add_option("pattern_"..i.."_quantization", "live-quantize pads "..banks[i].."?", {"no", "yes"})
     params:set_action("pattern_"..i.."_quantization", function(x)
-      -- grid_pat[i]:quant(x == 1 and 0 or 1)
-      -- if midi_pat ~= nil then -- TODO FIXME
-      --   midi_pat[i]:quant(x == 1 and 0 or 1)
-      -- end
       if x == 2 then
         bank[i].quantize_press = 1
+        params:show("pattern_"..i.."_quantization_num")
+        params:show("pattern_"..i.."_quantization_denum")
       else
         bank[i].quantize_press = 0
+        params:hide("pattern_"..i.."_quantization_num")
+        params:hide("pattern_"..i.."_quantization_denum")
       end
+      _menu.rebuild_params()
       if all_loaded then
         persistent_state_save()
       end
     end
     )
+    params:add_number("pattern_"..i.."_quantization_num",'  > num', 1,64,1)
+    params:add_number("pattern_"..i.."_quantization_denum",'  > denum',1,64,16)
   end
-  params:add_option("launch_quantization", "patterns launch at:", {"next beat", "next bar"})
+  params:add_option("launch_quantization", "patterns launch at:", {"next beat", "next bar","free"},3)
   -- params:hide("launch_quantization")
   params:add_separator("patterns")
   params:add_option("zilchmo_patterning", "grid pat style", { "classic", "rad sauce" })
@@ -296,8 +361,33 @@ function start_up.init()
   for i = 1,3 do
     params:add_option("arp_"..i.."_hold_style", "arp "..i.." hold style", {"last pressed","additive"},1)
   end
+  for i = 1,3 do
+    params:add_option("arp_"..i.."_rate", "arp "..i.." rate", {"1/32","1/16t","1/16","1/8t","1/8","1/4t","1/4","1/2t","1/2","1t","1"}, 3)
+    local time_rates = { 1/8, 1/6, 1/4, 1/3, 1/2, 2/3, 1, 4/3, 2, 8/3, 4}
+    params:set_action("arp_"..i.."_rate",
+      function(x)
+        if all_loaded then
+          if not arp[i].alt then
+            arp[i].time = time_rates[x]
+            for j = 1,16 do
+              bank[i][j].arp_time = time_rates[x]
+            end
+          end
+        end
+      end
+    )
+  end
+  for i = 1,3 do
+    params:add_number("arp_"..i.."_swing", "arp "..i.." swing", 50,100,50,function(param)return param:get()..'%' end)
+    params:add_option("arp_"..i.."_swing_style", "--> style", {'even steps', 'cumulative'}, 1)
+  end
 
-  params:add_trigger("arp_panic","arp reset (K3)")
+  for i = 1,3 do
+    params:add_option("arp_"..i.."_disengage", "arp "..i.." disengage style", {'reset','pause'}, 1)
+  end
+
+
+  params:add_trigger("arp_panic","arp panic (K3)")
   params:set_action("arp_panic",
     function (x)
       if all_loaded == true then
@@ -318,7 +408,7 @@ function start_up.init()
 
   params:add_group("pattern management",28)
   local banks = {"(a)", "(b)", "(c)"}
-  params:add_separator("save")
+  params:add_separator('pattern_save_separator', "save")
   for i = 1,3 do
     params:add_number("pattern_save_slot_"..i, "save slot "..banks[i],1,8,1)
     params:set_action("pattern_save_slot_"..i,
@@ -402,6 +492,7 @@ function start_up.init()
       end
     )
   end
+  
   params:add_separator("delete")
   for i = 1,3 do
     params:add_number("pattern_del_slot_"..i, "delete slot "..banks[i],1,8,1)
@@ -418,19 +509,19 @@ function start_up.init()
     )
   end
 
-  params:add_group("mappable control",99)
+  params:add_group("mappable control",105)
 
-  params:add_separator("save MIDI mappings")
+  params:add_separator('save_midi_mappings_sep', "save MIDI mappings")
 
   params:add{type='binary',name="save mappings",id='save_mappings',behavior='momentary', allow_pmap=false,
   action=function(x)
-    if all_loaded and x == 1 then
-      norns.pmap.write()
-    end
   end
   }
+  params:hide('save_midi_mappings_sep')
+  params:hide('save_mappings')
+  _menu.rebuild_params()
 
-params:add_separator("ALT key")
+  params:add_separator("ALT key")
 
   params:add{type='binary',name="ALT key",id='alt_key',behavior='momentary',
   action=function(x)
@@ -490,7 +581,7 @@ params:add_separator("ALT key")
       action=function()
         if all_loaded then
           -- if g.device ~= nil then
-          if get_grid_connected() then
+          if get_grid_connected() or osc_communication then
             random_grid_pat(i,3)
           else
             random_midi_pat(i)
@@ -507,7 +598,7 @@ params:add_separator("ALT key")
         if all_loaded then
           if x == 1 then
             -- if g.device ~= nil then
-            if get_grid_connected() then
+            if get_grid_connected() or osc_communication then
               random_grid_pat(id,2)
             else
               shuffle_midi_pat(id)
@@ -527,8 +618,18 @@ params:add_separator("ALT key")
           if not grid_alt then
             toggle_buffer(i)
           else
-            buff_flush()
+            buff_flush(rec.focus)
           end
+        end
+      end
+    }
+  end
+
+  for i = 1,3 do
+    params:add{type='binary',name="clear live "..i,id='clear_live_'..i,behavior='trigger',
+      action=function()
+        if all_loaded then
+          buff_flush(i)
         end
       end
     }
@@ -621,16 +722,20 @@ params:add_separator("ALT key")
     params:add_option("rate "..i, "rate "..banks[i], macros.pad_rates, tab.key(macros.pad_rates,macros.default_pad_rate))
     params:set_action("rate "..i, function(x)
       x = util.clamp(1,#macros.pad_rates,util.round(x))
-      for p = (grid_alt and 1 or bank[i].id),(grid_alt and 16 or bank[i].id) do
-        bank[i][p].rate = macros.pad_rates[x]
+      if params:string("rate "..i.." destructive") == "yes" then
+        for p = (grid_alt and 1 or bank[i].id),(grid_alt and 16 or bank[i].id) do
+          bank[i][p].rate = macros.pad_rates[x]
+        end
       end
       if bank[i][bank[i].id].pause == false then
         softcut.rate(i+1, bank[i][bank[i].id].rate*bank[i][bank[i].id].offset)
       end
     end)
+    params:add_option("rate "..i.." destructive", "   destructive?", {"no","yes"}, 2)
     params:add_control("rate slew time "..i, "rate slew time "..banks[i], controlspec.new(0,3,'lin',0.01,0))
     params:set_action("rate slew time "..i, function(x) softcut.rate_slew_time(i+1,x) end)
-    params:add_control("pan "..i, "pan "..banks[i], controlspec.new(-1,1,'lin',0.01,0))
+    params:add_control("pan "..i, "pan "..banks[i], controlspec.new(-1,1,'lin',0.01,0),
+    frm.bipolar_as_pan_widget)
     params:set_action("pan "..i, function(x)
       softcut.pan(i+1,x)
       for p = (grid_alt and 1 or bank[i].id),(grid_alt and 16 or bank[i].id) do
@@ -638,20 +743,24 @@ params:add_separator("ALT key")
       end
       screen_dirty = true
     end)
-    params:add_control("pan slew "..i,"pan slew "..banks[i], controlspec.new(0.,200.,'lin',0.1,5.0))
+    _lfos:register("pan "..i, 'bank LFOs')
+    params:add_control("pan slew "..i,"pan slew "..banks[i], controlspec.new(0.,200.,'lin',0.1,0.2))
     params:set_action("pan slew "..i, function(x) softcut.pan_slew_time(i+1,x) end)
-    params:add_control("level "..i, "pad level "..banks[i], controlspec.new(0,127,'lin',1,64))
+    params:add_control("level "..i, "pad level "..banks[i], controlspec.new(0,127,'lin',1,64),
+    function(param) return(util.round(util.linlin(0,127,0,199,param:get()),1).."%") end)
     params:set_action("level "..i, function(x)
       for p = (grid_alt and 1 or bank[i].id),(grid_alt and 16 or bank[i].id) do
         mc.adjust_pad_level(bank[i][p],x)
       end
       if all_loaded then mc.redraw(bank[i][bank[i].id]) end
       end)
-    params:add_control("bank level "..i, "bank level "..banks[i], controlspec.new(0,127,'lin',1,64))
+    params:add_control("bank level "..i, "bank level "..banks[i], controlspec.new(0,127,'lin',1,64,'',1/127),
+    function(param) return(util.round(util.linlin(0,127,0,199,param:get()),1).."%") end)
     params:set_action("bank level "..i, function(x)
       mc.adjust_bank_level(bank[i][bank[i].id],x)
       if all_loaded then mc.redraw(bank[i][bank[i].id]) end
       end)
+    _lfos:register("bank level "..i, 'bank LFOs')
     params:add_control("start point "..i, "start point "..banks[i], controlspec.new(0,127,'lin',1,0))
     params:set_action("start point "..i, function(x)
       mc.move_start(bank[i][bank[i].id],x)
@@ -719,7 +828,17 @@ params:add_separator("ALT key")
         end
       end
     }
-    params:add_control("filter tilt "..i, "filter tilt "..banks[i], controlspec.new(-1,1,'lin',0.01,0))
+    params:add_control("filter tilt "..i, "filter tilt "..banks[i], controlspec.new(-1,1,'lin',0.01,0),
+    function(param)
+      return(
+        param:get() < 0 and 
+          ("lp: "..util.round(util.linlin(-1,0,100,0,param:get()),1).."%")
+        or
+        (param:get() == 0 and "neutral" or
+          ("hp: "..util.round(util.linlin(0,1,0,100,param:get()),1).."%")
+        )
+      )
+    end)
     params:set_action("filter tilt "..i, function(x)
       for j = 1,16 do
         local target = bank[i][j]
@@ -728,11 +847,19 @@ params:add_separator("ALT key")
         end
         target.tilt = x
       end
-    slew_filter(i,slew_counter[i].prev_tilt,bank[i][bank[i].id].tilt,bank[i][bank[i].id].q,bank[i][bank[i].id].q,bank[i][bank[i].id].tilt_ease_time)
+      slew_filter(i,slew_counter[i].prev_tilt,bank[i][bank[i].id].tilt,bank[i][bank[i].id].q,bank[i][bank[i].id].q,bank[i][bank[i].id].tilt_ease_time)
+      if menu == 5 then
+        screen_dirty = true
+      end
     end)
+    _lfos:register("filter tilt "..i, 'bank LFOs')
   end
+
+  _lfos:add_params('bank LFOs',nil,true)
+
+  rytm.add_params()
   
-  params:add_group("delays",65)
+  params:add_group("delays",75)
 
   params:add_separator("manage delay audio")
   params:add{type = "trigger", id = "save_left_delay", name = "** save L delay", action = function() del.save_delay(1) end}
@@ -929,6 +1056,82 @@ params:add_separator("ALT key")
         params:set("delay "..sides[i-3]..": rate", macros.delay_rates[x])
       end
     end)
+
+    params:hide('delay rate '..i-3)
+    params:set_action("delay rate "..i-3, function(x)
+      if all_loaded then
+        params:set("delay "..sides[i-3]..": rate", macros.delay_rates[x])
+      end
+    end)
+
+    params:add{
+      type='control',
+      id='delay output '..i-3,
+      name='delay output '..i-3,
+      controlspec=controlspec.def{
+        min=0.00,
+        max=1.0,
+        warp='lin',
+        step=0.0001,
+        default=1,
+        quantum=0.0001,
+        wrap=false,
+      },
+    }
+    params:hide('delay output '..i-3)
+    params:set_action('delay output '..i-3, function(x)
+      if all_loaded then
+        params:set("delay "..sides[i-3]..": global level",x)
+      end
+    end)
+
+    local banks = {"a","b","c"}
+
+    for j = 1,3 do
+      params:add{
+        type='control',
+        id='delay input '..banks[j]..' '..i-3,
+        name='delay input '..banks[j]..' '..i-3,
+        controlspec=controlspec.def{
+          min=0.00,
+          max=1.0,
+          warp='lin',
+          step=0.0001,
+          default=1,
+          quantum=0.0001,
+          wrap=false,
+        },
+      }
+      params:hide('delay input '..banks[j]..' '..i-3)
+      params:set_action('delay input '..banks[j]..' '..i-3, function(x)
+        if all_loaded then
+          local banks = {"a","b","c"}
+          params:set("delay "..sides[i-3]..": ("..banks[j]..") send", x)
+        end
+      end)
+    end
+
+    params:add{
+      type='control',
+      id='delay input ext '..i-3,
+      name='delay input ext '..i-3,
+      controlspec=controlspec.def{
+        min=0.00,
+        max=1.0,
+        warp='lin',
+        step=0.0001,
+        default=1,
+        quantum=0.0001,
+        wrap=false,
+      },
+    }
+    params:hide('delay input ext '..i-3)
+    params:set_action('delay input ext '..i-3, function(x)
+      if all_loaded then
+        params:set("delay "..sides[i-3]..": external input", x)
+      end
+    end)
+    
     ---/
   end
 

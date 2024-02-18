@@ -153,7 +153,12 @@ function main_menu.init()
         local mult = mults[params:get("live_buff_rate")]
         local display_live_start = string.format("%.4g",(util.round(rec[rec.focus].start_point,0.0001)-off)*mult)
         local display_live_end = string.format("%.4g",(rec[rec.focus].end_point-off)*mult)
-        screen.text_right("s: "..display_live_start.."s | e: "..display_live_end.."s")
+        -- screen.text_right("s: "..display_live_start.."s | e: "..display_live_end.."s")
+        if params:get("rec_loop_enc_resolution") <= 2 then
+          screen.text_right("s: "..display_live_start.."s | e: "..display_live_end.."s")
+        else
+          screen.text_right("duration: "..util.round((display_live_end - display_live_start)/clock.get_beat_sec(),0.01).." beats" )
+        end
       end
     end
 
@@ -1057,7 +1062,12 @@ function main_menu.init()
     for i = 1,3 do
       screen.level(page_line == i and 15 or 3)
       -- local pattern = g.device ~= nil and grid_pat[i] or midi_pat[i]
-      local pattern = get_grid_connected() and grid_pat[i] or midi_pat[i]
+      local pattern
+      if get_grid_connected() or osc_communication then
+        pattern = grid_pat[i]
+      else
+        pattern =  midi_pat[i]
+      end
       screen.move(10+(20*(i-1)),25)
       screen.text("P"..i)
       screen.move(5+(20*(i-1)),25)
@@ -1070,8 +1080,12 @@ function main_menu.init()
     end
     
     if page.time_sel < 4 then
-      -- local pattern = g.device ~= nil and grid_pat[page_line] or midi_pat[page_line]
-      local pattern = get_grid_connected() and grid_pat[page_line] or midi_pat[page_line]
+      local pattern
+      if get_grid_connected() or osc_communication then
+        pattern = grid_pat[page_line]
+      else
+        pattern =  midi_pat[page_line]
+      end
       if pattern.sync_hold ~= nil and pattern.sync_hold then
         local show_me_beats = clock.get_beats() % 4
         local show_me_frac = math.fmod(clock.get_beats(),1)
@@ -1276,6 +1290,14 @@ function main_menu.init()
       screen.move(120, i*12 + 20)
       screen.text_center(rytm.track[i].pad_offset)
 
+      if rytm.track[i].mute then
+        screen.level(i == rytm.track_edit and 15 or 2)
+        for j = 0,128,6 do
+          screen.move(j, i*12 + 20)
+          screen.text("-")
+        end
+      end
+
     end
 
   elseif menu == 9 then
@@ -1325,8 +1347,7 @@ function main_menu.init()
     screen.level(page.arp_param[page.arp_page_sel] == 1 and 15 or 3)
     local banks = {"a","b","c"}
     local pad = tostring(banks[page.arp_page_sel]..bank[page.arp_page_sel].id)
-    -- screen.text_right((page.arp_alt[page.arp_page_sel] and (pad..": ") or "")..deci_to_frac[tostring(util.round(focus_arp.time, 0.0001))])
-    screen.text_right((page.arp_alt[page.arp_page_sel] and (pad..": ") or "")..deci_to_frac[tostring(util.round(bank[page.arp_page_sel][bank[page.arp_page_sel].id].arp_time, 0.0001))])
+    screen.text_right((arp[page.arp_page_sel].alt and (pad..": ") or "")..deci_to_frac[tostring(util.round(bank[page.arp_page_sel][bank[page.arp_page_sel].id].arp_time, 0.0001))])
     screen.move(125,30)
     screen.level(page.arp_param[page.arp_page_sel] == 2 and 15 or 3)
     screen.text_right(focus_arp.mode)
@@ -1549,9 +1570,18 @@ function main_menu.init()
     screen.level(15)
     screen.move(62,30)
     screen.font_size(10)
-    screen.text_center("name is taken")
+    screen.text_center("error: name is taken")
     screen.move(62,50)
     screen.text_center("will not save")
+  elseif menu == "cannot save screen" then
+    -- print("shoudl show cannot save menu")
+    screen.level(15)
+    screen.move(62,30)
+    screen.font_size(10)
+    screen.text_center("error: bad filename")
+    screen.move(62,50)
+    screen.text_center("will not save")
+    selected_coll = 0
   elseif menu == "MIDI_config" then
     mc.midi_config_redraw(page.midi_bank)
   elseif menu == "macro_config" then
@@ -1566,13 +1596,25 @@ end
 
 function save_screen(text)
   named_savestate(text)
-  menu = "save screen"
-  -- screen_dirty = true
-  clock.sleep(0.05)
-  screen_dirty = true
-  clock.sleep(1)
-  menu = 1
-  screen_dirty = true
+  local file = util.file_exists(_path.data .. "cheat_codes_2/collection-"..selected_coll.."/patterns/midi3.data")
+  if file then
+    menu = "save screen"
+    -- screen_dirty = true
+    clock.sleep(0.05)
+    screen_dirty = true
+    clock.sleep(1)
+    menu = 1
+    screen_dirty = true
+    print("saved collection '"..text..'"')
+  else
+    if not save_fail_state then
+      -- print("save screen doesn't know, running from save screen")
+      save_fail_state = true
+      clock.run(cannot_save_screen,text)
+      _norns.key(1,1)
+      _norns.key(1,0)
+    end
+  end
 end
 
 function save_fail_screen(text)
@@ -1583,6 +1625,23 @@ function save_fail_screen(text)
   screen_dirty = true
   _norns.key(1,1)
   _norns.key(1,0)
+end
+
+function cannot_save_screen(text)
+  print("CANNOT SAVE COLLECTION WITH THAT NAME")
+  local return_to = menu
+  menu = "cannot save screen"
+  _norns.key(1,1)
+  _norns.key(1,0)
+  screen_dirty = true
+  clock.sleep(1)
+  menu = return_to
+  screen_dirty = true
+  _norns.key(1,1)
+  _norns.key(1,0)
+  
+  -- print("got to end of cannot save")
+  save_fail_state = false
 end
 
 function default_load_screen()

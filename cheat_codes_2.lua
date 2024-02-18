@@ -1,11 +1,21 @@
 -- cheat codes 2
 --          a sample playground
--- rev: 211008 - LTS3
+-- rev: 240206 - LTS13
 -- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ 
 -- need help?
 -- please visit:
 -- l.llllllll.co/cheat-codes-2
 -- -------------------------------
+
+if tonumber(norns.version.update) < 221214 then
+  norns.script.clear()
+  norns.script.load('code/cheat_codes_2/lib/fail_state-update.lua')
+end
+
+if not util.file_exists(_path.code..'cheat_codes_2/lib/nb/lib/') then
+  norns.script.clear()
+  norns.script.load('code/cheat_codes_2/lib/fail_state-nb.lua')
+end
 
 if util.file_exists(_path.code.."passthrough") then
   local passthru = include 'passthrough/lib/passthrough'
@@ -22,7 +32,13 @@ if util.file_exists(_path.code.."namesizer") then
   Namesizer = include 'namesizer/lib/namesizer'
 end
 
-local grid = util.file_exists(_path.code.."midigrid") and include "midigrid/lib/midigrid" or grid
+function grid.add(dev)
+  grid_dirty = true
+end
+
+midigrid_present = util.file_exists(_path.code.."midigrid") and grid.vports[1].name == 'none'
+
+grid_device = midigrid_present and include "midigrid/lib/mg_128" or grid
 
 function push_to_cc2(encoder, d)
   -- translate the bank of 8 encoders to whatever params you want!
@@ -87,21 +103,91 @@ mc = include 'lib/midicheat'
 macros = include 'lib/macros'
 transport = include 'lib/transport'
 speed_dial = include 'lib/speed_dial'
+_lfos = include 'lib/lfos'
+_lfos.max_per_group = 9
 math.randomseed(os.time())
-variable_fade_time = 0.01
 splash_done = true
+actively_loading_collection = false
+cc_json = include 'lib/cc_json'
+nb = include 'lib/nb/lib/nb'
 
 macro = {}
 for i = 1,8 do
   macro[i] = macros.new_macro()
 end
 
-function rec_ended_callback()
-  -- for i = 1,3 do
-  --   if bank[i].id == 1 then
-  --     cheat(i,1)
-  --   end
-  -- end
+-- thank you zack (@infinitedigits) for pioneering aubiogo on norns!!!
+cursors = {{},{},{}}
+detecting_onsets_popup = {}
+detected_onsets_popup = {}
+
+osc_fun={
+  progressbar=function(args)
+    -- print(args[1],tonumber(args[2]))
+    detecting_onsets_popup = {state = true, percent = args[2], id = tonumber(string.match(args[1],"%d+"))}
+  end,
+  aubiodone=function(args)
+    local id=tonumber(args[1])
+    stuff=args[2]
+    local data=cc_json.parse(stuff)
+    if data==nil then
+      print("error getting onset data!")
+      do return end
+    end
+    if data.error~=nil then
+      print("error getting onset data: "..data.error)
+      do return end
+    end
+    if data.result==nil then
+      print("no onset results!")
+      do return end
+    end
+    cursors[id] = data.result
+    if not util.file_exists(_path.data..'/cheat_codes_2/cursors/') then
+      util.make_dir(_path.data..'/cheat_codes_2/cursors/')
+    end
+    tab.save(data.result,_path.data..'/cheat_codes_2/cursors/'..params:string('clip '..id..' sample')..'.cursors')
+    params:hide('detect_onsets_'..id)
+    params:show('clear_onsets_'..id)
+    detecting_onsets_popup = {state = false, percent = nil, id = nil}
+    detected_onsets_popup = {state = true, id = id}
+    for b = 1,3 do
+      for i = 1,16 do
+        if bank[b][i].mode == 2 and bank[b][i].clip == id then
+          rightangleslice.start_end_default(bank[b][i])
+        end
+      end
+    end
+    clock.run(clear_detected_onsets_popup)
+    _menu.rebuild_params()
+    -- print(id)
+  end,
+}
+
+function clear_detected_onsets_popup()
+  clock.sleep(clip[detected_onsets_popup.id].sample_rate < 48000 and 2 or 1)
+  detected_onsets_popup = {state = false, id = nil}
+end
+
+function detect_onsets(id,file)
+  if util.file_exists(_path.data..'/cheat_codes_2/cursors/'..params:string('clip '..id..' sample')..'.cursors') then
+    cursors[id] = tab.load(_path.data..'/cheat_codes_2/cursors/'..params:string('clip '..id..' sample')..'.cursors')
+    params:hide('detect_onsets_'..id)
+    params:show('clear_onsets_'..id)
+    detecting_onsets_popup = {state = false, percent = nil, id = nil}
+    detected_onsets_popup = {state = true, id = id}
+    for b = 1,3 do
+      for i = 1,16 do
+        if bank[b][i].mode == 2 and bank[b][i].clip == id then
+          rightangleslice.start_end_default(bank[b][i])
+        end
+      end
+    end
+    clock.run(clear_detected_onsets_popup)
+    _menu.rebuild_params()
+  else
+    os.execute(_path.code.."zxcvbn/lib/aubiogo/aubiogo --id "..id.." --filename '"..file.."' --num 16 &")
+  end
 end
 
 SOS = {}
@@ -748,10 +834,9 @@ end
 
 key1_hold = false
 key1_hold_and_modify = false
-key2_hold_counter = metro.init()
-key2_hold_counter.time = 0.25
-key2_hold_counter.count = 1
-key2_hold_counter.event = function()
+
+function count_key2()
+  clock.sleep(0.25)
   key2_hold = true
   screen_dirty = true
 end
@@ -760,8 +845,6 @@ key2_hold = false
 key2_hold_and_modify = false
 
 grid_alt = false
--- grid.alt_pp = 0
--- grid.alt_delay = false
 grid_loop_mod = 0
 
 local function crow_flush()
@@ -832,6 +915,8 @@ function init()
 
   type_of_pattern_loaded = {"grid","grid","grid"}
   loading_arp_from_grid = {nil,nil,nil}
+  loading_euclid_from_grid = {nil,nil,nil}
+  loading_free_from_grid = {nil,nil,nil}
   
   engine.release(0.1)
   amp_in = {}
@@ -894,7 +979,10 @@ function init()
     rec[i].rate_offset = 1.0
     rec[i].waveform_samples = {}
     rec[i].queued = false
+    rec[i].last_purged = 0
   end
+
+  rec.transport_queued = false
 
   params:add_group("GRID/ARC",6)
   params:add_option("LED_style","grid LED style",{"varibright","4-step","grayscale"},1)
@@ -905,13 +993,20 @@ function init()
       persistent_state_save()
     end
   end)
-  params:add_option("grid_size","grid size",{"128","64"},1)
+  params:add_option("grid_size","grid size",{"128/256","64"},1)
   params:set_action("grid_size",
   function(x)
-    grid_dirty = true
-    if x == 2 then
+    if x == 1 then
+      if g.cols * g.rows == 256 then
+        g:rotation(3)
+      else
+        g:rotation(params:get('vert rotation') == 1 and 0 or 2)
+      end
+    elseif x == 2 then
+      g:rotation(params:get('vert rotation') == 1 and 0 or 2)
       params:set("LED_style",2)
     end
+    grid_dirty = true
     if all_loaded then
       persistent_state_save()
     end
@@ -921,7 +1016,7 @@ function init()
   function(x)
     if x == 1 then
       g:rotation(0)
-    else
+    elseif x == 2 then
       g:rotation(2)
     end
     grid_dirty = true
@@ -933,9 +1028,6 @@ function init()
   params:add_option("midigrid?","midigrid?",{"no","yes"},1)
   params:set_action("midigrid?",
   function(x)
-    if x == 2 then
-      params:set("grid_size",2)
-    end
     if all_loaded then
       persistent_state_save()
     end
@@ -971,12 +1063,20 @@ function init()
   end
   params:add_option("crow output 4", "crow out 4",{"none","transport pulse","transport gate"},1)
   params:set_action("crow output 4",
-    function(x)
-      if all_loaded then
-        persistent_state_save()
-      end
-    end)
-  
+  function(x)
+    if all_loaded then
+      persistent_state_save()
+    end
+  end)
+
+  nb:init()
+  params:add_separator('nb params')
+  local bank_names = {'A', 'B', 'C'}
+  for i = 1,3 do
+    nb:add_param("nb_"..i, "bank "..bank_names[i]) -- adds a voice selector param to your script.
+  end
+  nb:add_player_params() -- Adds the parameters for the selected voices to your script.
+
   params:add_separator("cheat codes params")
   
   params:add_group("collections (load/save)",8)
@@ -997,10 +1097,13 @@ function init()
   params:add_option("collect_live","collect Live buffers?",{"no","yes"})
   params:add_trigger("save", "save new collection")
   params:set_action("save", function(x)
-    if Namesizer ~= nil then
-      textentry.enter(pre_save,Namesizer.phonic_nonsense().."_"..Namesizer.phonic_nonsense())
-    else
-      textentry.enter(pre_save)
+    if not actively_loading_collection then
+      print('entering collection save menu')
+      if Namesizer ~= nil then
+        textentry.enter(pre_save,Namesizer.phonic_nonsense().."_"..Namesizer.phonic_nonsense())
+      else
+        textentry.enter(pre_save,nil)
+      end
     end
   end)
   params:add_separator("danger zone!")
@@ -1232,7 +1335,6 @@ function init()
   end
   page.arp_page_sel = 1
   page.arp_param = {1,1,1}
-  page.arp_alt = {false,false,false}
   page.arp_param_group = {}
   for i = 1,3 do
     page.arp_param_group[i] = 1
@@ -1288,7 +1390,6 @@ function init()
   --GRID
   selected = {}
   fingers = {}
-  counter_two = {}
   for i = 1,3 do
     selected[i] = {}
     selected[i].x = 1 + (5*(i-1))
@@ -1320,18 +1421,6 @@ function init()
     grid_p[sel].end_point = bank[sel][bank[sel].id].end_point
     grid_pat[sel]:watch(grid_p[sel])
   end
-
-  function record_arp()
-  end
-
-  counter_two = {}
-  counter_two.key_up = metro.init()
-  counter_two.key_up.time = 0.05
-  counter_two.key_up.count = 1
-  counter_two.key_up.event = function()
-    zilchmo(2,selected_zilchmo_bank)
-  end
-  counter_two.key_up:stop()
   
   quantized_grid_pat = {}
   for i = 1,3 do
@@ -1404,7 +1493,7 @@ function init()
           rec_state_watcher:stop()
           rec.stopped = true
           grid_dirty = true
-          rec_ended_callback()
+          -- rec_ended_callback()
           -- if menu == 2 then
           --   if page.loops.sel ~= 5 then screen_dirty = true end
           --   -- print("stopped")
@@ -1514,7 +1603,9 @@ function init()
   crow_init()
   
   task_id = clock.run(globally_clocked)
-  pad_press_quant = clock.run(pad_clock)
+  pad_press_quantA = clock.run(pad_clock,1)
+  pad_press_quantB = clock.run(pad_clock,2)
+  pad_press_quantC = clock.run(pad_clock,3)
   random_rec = clock.run(random_rec_clock)
   
   if params:string("clock_source") == "internal" then
@@ -1926,9 +2017,14 @@ function init()
   if g then grid_dirty = true end
   
   -- all_loaded = true
-  
-  metro_persistent_state_restore = metro.init(persistent_state_restore, 0.1, 1)
-  metro_persistent_state_restore:start()
+
+  clock.run(
+    function()
+      clock.sleep(0.1)
+      persistent_state_restore()
+      print("restoring persistent state data")
+    end
+  )
 
   hardware_redraw = metro.init(
     function()
@@ -1978,6 +2074,10 @@ function init()
   audio.level_eng_cut(util.dbamp(-math.huge))
   norns.state.mix.cut_input_eng = -math.huge
   clock.run(metronome_audio)
+  if g.cols * g.rows == 256 then
+    g:rotation(3)
+    grid_dirty = true
+  end
 end
 
 ---
@@ -2121,11 +2221,13 @@ end
 function alt_synced_loop(target,state,style,mod_table)
   if transport.is_running then
     if state == "restart" then
-      clock.sync(params:get("launch_quantization") == 1 and 1 or 4)
-      -- print("restarting", clock.get_beats())
+      if params:get("launch_quantization") ~= 3 then
+        clock.sync(params:get("launch_quantization") == 1 and 1 or 4)
+      end
     end
     if style == "delayed_load" then
       load_pattern(mod_table[1],mod_table[2])
+      print("delayed load...")
     end
     local name_to_id = {"grid_pat[1]","grid_pat[2]","grid_pat[3]"}
     
@@ -2133,7 +2235,7 @@ function alt_synced_loop(target,state,style,mod_table)
       -- print("arp thing")
       if grid_pat[tab.key(name_to_id,target.name)].play == 1 then
         grid_pat[tab.key(name_to_id,target.name)]:stop()
-        grid_pat[tab.key(name_to_id,target.name)]:clear()
+        -- grid_pat[tab.key(name_to_id,target.name)]:clear()
       end
       local destination = tab.key(name_to_id,target.name)
       local arp_start =
@@ -2152,14 +2254,16 @@ function alt_synced_loop(target,state,style,mod_table)
     elseif type_of_pattern_loaded[tab.key(name_to_id,target.name)] == "grid" then
       -- print("grid thing")
       if arp[tab.key(name_to_id,target.name)].playing and source ~= "from_grid" then
-        arp[tab.key(name_to_id,target.name)].pause = true
-        arp[tab.key(name_to_id,target.name)].playing = false
+        -- arp[tab.key(name_to_id,target.name)].pause = true
+        -- arp[tab.key(name_to_id,target.name)].playing = false
+        arps.clear(tab.key(name_to_id,target.name))
       end
       target:start()
+      print("starting from alt sync "..clock.get_beats())
       target.synced_loop_runner = 1
       -- print("alt_synced",clock.get_beats(),target)
       while true do
-        clock.sync(1/4)
+        clock.sync(1/4,1/128)
         if target.synced_loop_runner == target.rec_clock_time * 4 then
           target.synced_loop_runner = 1
           -- print(clock.get_beats(), target.synced_loop_runner)
@@ -2172,42 +2276,21 @@ function alt_synced_loop(target,state,style,mod_table)
           end
           if target.loop == 1 then
             -- clear_arps_from_pattern_restart(target.event[target.count].i)
+            -- print("!!"..song_atoms.bank[tab.key(name_to_id,target.name)].lane[song_atoms.bank[tab.key(name_to_id,target.name)].current]["arp"].target, song_atoms.bank[tab.key(name_to_id,target.name)].runner)
+            -- if song_atoms.bank[tab.key(name_to_id,target.name)].lane[song_atoms.bank[tab.key(name_to_id,target.name)].current]["arp"].target == -1 then
+            --   print("heyyy should stop yeah??")
+            -- end
             target:start()
-            -- print("and then start...")
+            -- print("and then start "..clock.get_beats())
           end
         else
           target.synced_loop_runner =  target.synced_loop_runner + 1
         end
       end
+    elseif type_of_pattern_loaded[tab.key(name_to_id,target.name)] == "euclid" then
+      print("hi alt euclid!!")
     end
-
-
--- clear_arps_from_pattern_restart(target.event[target.count].i)
--- target:start()
--- target.synced_loop_runner = 1
--- -- print("alt_synced",clock.get_beats(),target)
--- while true do
---   clock.sync(1/4)
---   if target.synced_loop_runner == target.rec_clock_time * 4 then
---     target.synced_loop_runner = 1
---     -- print(clock.get_beats(), target.synced_loop_runner)
---     local overdub_flag = target.overdub
---     -- target:stop()
---     stop_pattern(target,"no kill")
---     -- print("stopping")
---     if overdub_flag == 1 then
---       target.overdub = 1
---     end
---     if target.loop == 1 then
---       -- clear_arps_from_pattern_restart(target.event[target.count].i)
---       target:start()
---       -- print("and then start...")
---     end
---   else
---     target.synced_loop_runner =  target.synced_loop_runner + 1
---   end
--- end
-end
+  end 
 end
 
 function stop_pattern(target,style)
@@ -2226,21 +2309,54 @@ function start_pattern(target,start_type,style,mod_table)
       clock.transport.stop()
     else
       if params:string("clock_source") == "internal" then
+        transport.pending = true
         clock.internal.start(-0.1)
       else
+        transport.pending = true
         transport.cycle = 1
         clock.transport.start()
       end
-      transport.pending = true
     end
   end
   if transport.is_running then
     if target.playmode == 2 then
       if target.clock ~= nil then clock.cancel(target.clock) end
       -- print(mod_table,style,style == nil,(style ~= nil and "delayed_load" or nil))
+      -- print("...."..(style ~= nil and style or ""))
       target.clock = clock.run(alt_synced_loop, target, start_type ~= nil and start_type or "restart",(style ~= nil and "delayed_load" or nil),(mod_table ~= nil and mod_table or nil))
     else
-      target:start()
+      local name_to_id = {"grid_pat[1]","grid_pat[2]","grid_pat[3]"}
+      local destination = tab.key(name_to_id,target.name)
+      if start_type ~= "jumpstart" then
+      -- print("what else can i do but start the pattern?")
+        if loading_free_from_grid[destination] ~= nil then
+          clock.cancel(loading_free_from_grid[destination])
+        end
+        loading_free_from_grid[destination] = 
+        clock.run(
+          function()
+            if params:get("launch_quantization") ~= 3 then
+              clock.sync(params:get("launch_quantization") == 1 and 1 or 4)
+            end
+            if mod_table ~= nil then
+              load_pattern(mod_table[1],mod_table[2])
+              print("starting a pattern!", type_of_pattern_loaded[destination])
+              if type_of_pattern_loaded[destination] == "grid" then
+                if arp[destination].playing then
+                  arps.toggle("stop",destination)
+                end
+                target:start()
+              end
+            else
+              print("????")
+              print("starting a pattern2")
+              target:start()
+            end
+          end
+        )
+      else
+        target:start()
+      end
     end
   end
 
@@ -2263,19 +2379,9 @@ function synced_record_start(target,i)
 end
 
 function synced_pattern_record(target)
-  clock.sleep((clock.get_beat_sec()*target.rec_clock_time)+ (clock.get_beat_sec()*1/16))
+  clock.sleep((clock.get_beat_sec()*target.rec_clock_time)+ (clock.get_beat_sec()*1/8))
   if target.rec_clock ~= nil then
     target:rec_stop()
-    -- if target is a grid pat, should do all the grid pat thing:
-    --[[
-      midi_clock_linearize(i)
-      if grid_pat[i].auto_snap == 1 then
-        print("auto-snap")
-        snap_to_bars(i,how_many_bars(i))
-      end
-      grid_pat[i]:start()
-      grid_pat[i].loop = 1
-    --]]
     pattern_length_to_bars(target, "destructive")
     if target.time[1] ~= nil and target.time[1] < clock.get_beat_sec()/4 and target.event[1] == "pause" then
       print("we could lose the first event..."..target.count, target.end_point)
@@ -2291,12 +2397,17 @@ function synced_pattern_record(target)
       table.remove(target.time_beats,1)
       target.count = #target.event
       target.end_point = target.count
-      print(target.count, target.end_point)
       for i = 1,target.count do
         target:calculate_quantum(i)
       end
     end
-    target.time[1] = target.time[1] - (clock.get_beat_sec()*1/16)
+    target.time[1] = target.time[1] - (clock.get_beat_sec()*1/8)
+    local ideal = clock.get_beat_sec()*target.rec_clock_time
+    local butts = 0
+    for i = 1,target.count do
+      butts = butts + target.time[i]
+    end
+    target.time[#target.time] = target.time[#target.time] + (ideal - butts)
     if target.count > 0 then -- just in case the recording was canceled...
       --target:start()
       print("started first run..."..clock.get_beats())
@@ -2400,12 +2511,10 @@ end
 
 ---
 
-function pad_clock()
+function pad_clock(i)
   while true do
-    clock.sync(1/4)
-    for i = 1,3 do
-      cheat_clock_synced(i)
-    end
+    clock.sync(params:get("pattern_"..i.."_quantization_num")/(params:get("pattern_"..i.."_quantization_denum")/4))
+    cheat_clock_synced(i)
   end
 end
 
@@ -2434,7 +2543,7 @@ function run_one_shot_rec_clock()
   one_shot_rec_clock = clock.run(one_shot_clock)
 end
 
-function cancel_one_shot_rec_clock()
+function cancel_one_shot_rec_clock(punch_out)
   if one_shot_rec_clock ~= nil then
     clock.cancel(one_shot_rec_clock)
   end
@@ -2448,9 +2557,14 @@ function cancel_one_shot_rec_clock()
     end
   end
   one_shot_rec_clock = nil
+  if punch_out then
+    rec[rec.focus].end_point = poll_position_new[1]
+  end
 end
 
 function one_shot_clock()
+  softcut.level_slew_time(1,0)
+  softcut.fade_time(1,0)
   rec[rec.focus].queued = true
   if rec[rec.focus].state == 1 and rec_state_watcher.is_running then
     rec_state_watcher:stop()
@@ -2616,140 +2730,152 @@ function globally_clocked()
 end
 
 osc_in = function(path, args, from)
-  if osc_communication ~= true then
-    params:set("osc_IP",from[1])
-    params:set("osc_port",from[2])
-    osc_communication = true
-  end
-  for i = 1,3 do
-    local target = bank[i][bank[i].id]
-    if path:find('^'.."/pad_sel_"..i) then
-      local pad_target = tonumber(path:match("^.*%_(.*)"))
-      if args[1] == 1 then
-        grid_actions.pad_down(i,pad_target)
-      elseif args[1] == 0 then
-        grid_actions.pad_up(i,pad_target)
-      end
-    elseif path:find('^'.."/grid_pat_"..i) then
-      if args[1] == 1 then
-        grid_actions.grid_pat_handler(i)
-      end
-    elseif path:find('^'.."/arp_"..i) then
-      if args[1] == 1 then
-        if not grid_alt then
-          grid_actions.arp_handler(i)
-        else
-          grid_actions.kill_arp(i)
-        end
-      end
-    elseif path == "/randomize_this_bank_"..i then
-      random_grid_pat(i,3)
-      for j = 2,16 do
-        bank[i][j].start_point = (math.random(10,30)/10)+(8*(bank[i][j].clip-1))
-        bank[i][j].end_point = bank[i][j].start_point + (math.random(10,60)/10)
-        bank[i][j].pan = math.random(-100,100)/100
-      end
-      grid_pat[i]:rec_stop()
-      grid_pat[i]:stop()
-      grid_pat[i].tightened_start = 0
 
-    elseif path == "/pad_rate_"..i then
-      target.rate = args[1]
-      softcut.rate(i+1,target.rate)
-    elseif path == "/bank_rate_"..i then
-      for j = 1,16 do
-        bank[i][j].rate = args[1]
-      end
-      softcut.rate(i+1,target.rate)
-    elseif path == "/pad_rev_"..i then
-      target.rate = target.rate * - 1
-      softcut.rate(i+1,target.rate)
-    elseif path == "/bank_rev_"..i then
-      local direction;
-      if target.rate > 0 then
-        direction = 1
-      else
-        direction = -1
-      end
-      for j = 1,16 do
-        bank[i][j].rate = math.abs(bank[i][j].rate)*(-1*direction)
-      end
-      softcut.rate(i+1,target.rate)
-    elseif path == "/bank_rand_rate_"..i then
-      for j = 1,16 do
-        bank[i][j].rate = math.pow(2,math.random(-3,2))*((math.random(1,2)*2)-3)
-      end
-      softcut.rate(i+1,target.rate)
-    elseif path == "/sixteenths_"..i then
-      for j = 1,16 do
-        local pad = bank[i][j]
-        local duration = pad.mode == 1 and 8 or clip[pad.clip].sample_length
-        local s_p = pad.mode == 1 and live[pad.clip].min or clip[pad.clip].min
-        pad.end_point = pad.start_point + (clock.get_beat_sec()/4)
-      end
-      softcut.loop_start(i+1,target.start_point)
-      softcut.loop_end(i+1,target.end_point)
-    elseif path == "/chop_"..i then
-      for j = 1,16 do
-        local duration;
-        local pad = bank[i][j]
-        if pad.mode == 1 then
-          --slice within bounds
-          duration = rec[rec.focus].end_point-rec[rec.focus].start_point
-          local s_p = rec[rec.focus].start_point+(8*(pad.clip-1))
-          pad.start_point = (s_p+(duration/16) * (pad.pad_id-1))
-          pad.end_point = (s_p+((duration/16) * (pad.pad_id)))
-        else
-          duration = pad.mode == 1 and 8 or clip[pad.clip].sample_length
-          pad.start_point = ((duration/16)*(pad.pad_id-1)) + clip[pad.clip].min
-          pad.end_point = pad.start_point + (duration/16)
+  if path == '/progressbar' or path == '/aubiodone' then
+    if string.sub(path,1,1)=="/" then
+      path=string.sub(path,2)
+    end
+    if osc_fun[path] ~= 'progressbar' or 'aubiodone' then
+      osc_fun[path](args)
+    end
+    return
+  else
+    if osc_communication ~= true then
+      params:set("osc_IP",from[1])
+      params:set("osc_port",from[2])
+      osc_communication = true
+    end
+    for i = 1,3 do
+      local target = bank[i][bank[i].id]
+      -- if path:find('^'.."/pad_sel_"..i) then
+      if string.match(path,"/pad_sel_"..i) then
+        local pad_target = tonumber(path:match("^.*%_(.*)"))
+        if args[1] == 1 then
+          grid_actions.pad_down(i,pad_target)
+        elseif args[1] == 0 then
+          grid_actions.pad_up(i,pad_target)
         end
-      end
-      softcut.loop_start(i+1,target.start_point)
-      softcut.loop_end(i+1,target.end_point)
-    elseif path == "/rand_loop_points_"..i then
-      for j = 1,16 do
-        local duration, max_end, min_start;
-        local pad = bank[i][j]
-        if pad.mode == 1 and pad.clip == rec.focus then
-          duration = rec[rec.focus].end_point-rec[rec.focus].start_point
-          max_end = math.floor(pad.end_point * 100)-10
-          if max_end < math.floor(rec[rec.focus].start_point * 100) then
+      elseif string.match(path,"/grid_pat_"..i) then
+        if args[1] == 1 then
+          grid_actions.grid_pat_handler(i)
+        end
+      elseif string.match(path,"/arp_"..i) then
+        if args[1] == 1 then
+          if not grid_alt then
+            grid_actions.arp_handler(i)
+          else
+            grid_actions.kill_arp(i)
+          end
+        end
+      elseif path == "/randomize_this_bank_"..i then
+        random_grid_pat(i,3)
+        for j = 2,16 do
+          bank[i][j].start_point = (math.random(10,30)/10)+(8*(bank[i][j].clip-1))
+          bank[i][j].end_point = bank[i][j].start_point + (math.random(10,60)/10)
+          bank[i][j].pan = math.random(-100,100)/100
+        end
+        grid_pat[i]:rec_stop()
+        grid_pat[i]:stop()
+        grid_pat[i].tightened_start = 0
+
+      elseif path == "/pad_rate_"..i then
+        target.rate = args[1]
+        softcut.rate(i+1,target.rate)
+      elseif path == "/bank_rate_"..i then
+        for j = 1,16 do
+          bank[i][j].rate = args[1]
+        end
+        softcut.rate(i+1,target.rate)
+      elseif path == "/pad_rev_"..i then
+        target.rate = target.rate * - 1
+        softcut.rate(i+1,target.rate)
+      elseif path == "/bank_rev_"..i then
+        local direction;
+        if target.rate > 0 then
+          direction = 1
+        else
+          direction = -1
+        end
+        for j = 1,16 do
+          bank[i][j].rate = math.abs(bank[i][j].rate)*(-1*direction)
+        end
+        softcut.rate(i+1,target.rate)
+      elseif path == "/bank_rand_rate_"..i then
+        for j = 1,16 do
+          bank[i][j].rate = math.pow(2,math.random(-3,2))*((math.random(1,2)*2)-3)
+        end
+        softcut.rate(i+1,target.rate)
+      elseif path == "/sixteenths_"..i then
+        for j = 1,16 do
+          local pad = bank[i][j]
+          local duration = pad.mode == 1 and 8 or clip[pad.clip].sample_length
+          local s_p = pad.mode == 1 and live[pad.clip].min or clip[pad.clip].min
+          pad.end_point = pad.start_point + (clock.get_beat_sec()/4)
+        end
+        softcut.loop_start(i+1,target.start_point)
+        softcut.loop_end(i+1,target.end_point)
+      elseif path == "/chop_"..i then
+        for j = 1,16 do
+          local duration;
+          local pad = bank[i][j]
+          if pad.mode == 1 then
+            --slice within bounds
+            duration = rec[rec.focus].end_point-rec[rec.focus].start_point
+            local s_p = rec[rec.focus].start_point+(8*(pad.clip-1))
+            pad.start_point = (s_p+(duration/16) * (pad.pad_id-1))
+            pad.end_point = (s_p+((duration/16) * (pad.pad_id)))
+          else
+            duration = pad.mode == 1 and 8 or clip[pad.clip].sample_length
+            pad.start_point = ((duration/16)*(pad.pad_id-1)) + clip[pad.clip].min
+            pad.end_point = pad.start_point + (duration/16)
+          end
+        end
+        softcut.loop_start(i+1,target.start_point)
+        softcut.loop_end(i+1,target.end_point)
+      elseif path == "/rand_loop_points_"..i then
+        for j = 1,16 do
+          local duration, max_end, min_start;
+          local pad = bank[i][j]
+          if pad.mode == 1 and pad.clip == rec.focus then
+            duration = rec[rec.focus].end_point-rec[rec.focus].start_point
+            max_end = math.floor(pad.end_point * 100)-10
+            if max_end < math.floor(rec[rec.focus].start_point * 100) then
+              min_start = math.floor(((duration*(pad.clip-1))+1) * 100)
+            else
+              min_start = math.floor(rec[rec.focus].start_point * 100) -- this sucks...
+            end
+          elseif pad.mode == 2 then
+            max_end = math.floor(pad.end_point * 100)
+            min_start = math.floor(clip[pad.clip].min * 100)
+          else
+            duration = pad.mode == 1 and 8 or math.modf(clip[pad.clip].sample_length)
+            max_end = math.floor(pad.end_point * 100)
             min_start = math.floor(((duration*(pad.clip-1))+1) * 100)
-          else
-            min_start = math.floor(rec[rec.focus].start_point * 100) -- this sucks...
           end
-        elseif pad.mode == 2 then
-          max_end = math.floor(pad.end_point * 100)
-          min_start = math.floor(clip[pad.clip].min * 100)
-        else
-          duration = pad.mode == 1 and 8 or math.modf(clip[pad.clip].sample_length)
-          max_end = math.floor(pad.end_point * 100)
-          min_start = math.floor(((duration*(pad.clip-1))+1) * 100)
-        end
-        pad.start_point = math.random(min_start,max_end)/100
-        if pad.mode == 1 and pad.clip == rec.focus then
-          duration = rec[rec.focus].end_point-rec[rec.focus].start_point
-          max_end = math.floor(rec[rec.focus].end_point*100)
-          if pad.start_point > rec[rec.focus].start_point then
-            min_start = math.floor(pad.start_point * 100)+10
+          pad.start_point = math.random(min_start,max_end)/100
+          if pad.mode == 1 and pad.clip == rec.focus then
+            duration = rec[rec.focus].end_point-rec[rec.focus].start_point
+            max_end = math.floor(rec[rec.focus].end_point*100)
+            if pad.start_point > rec[rec.focus].start_point then
+              min_start = math.floor(pad.start_point * 100)+10
+            else
+              min_start = math.floor(rec[rec.focus].start_point * 100)
+            end
+          elseif pad.mode == 2 then
+            max_end = math.floor(clip[pad.clip].max * 100)
+            min_start = math.floor(pad.start_point * 100)
           else
-            min_start = math.floor(rec[rec.focus].start_point * 100)
+            duration = util.round(clip[pad.clip].sample_length)
+            max_end = math.floor(((duration*pad.clip)+1) * 100)
+            min_start = math.floor(pad.start_point * 100)
           end
-        elseif pad.mode == 2 then
-          max_end = math.floor(clip[pad.clip].max * 100)
-          min_start = math.floor(pad.start_point * 100)
-        else
-          duration = util.round(clip[pad.clip].sample_length)
-          max_end = math.floor(((duration*pad.clip)+1) * 100)
-          min_start = math.floor(pad.start_point * 100)
+          pad.end_point = math.random(min_start,max_end)/100
         end
-        pad.end_point = math.random(min_start,max_end)/100
+        softcut.loop_start(i+1,target.start_point)
+        softcut.loop_end(i+1,target.end_point)
+      elseif path == "/filter_cut_bank_"..i then
+        encoder_actions.set_filter_cutoff(i,args[1])
       end
-      softcut.loop_start(i+1,target.start_point)
-      softcut.loop_end(i+1,target.end_point)
-    elseif path == "/filter_cut_bank_"..i then
-      encoder_actions.set_filter_cutoff(i,args[1])
     end
   end
   grid_dirty = true
@@ -2983,9 +3109,11 @@ function find_the_key(t,val)
 end
 
 function cheat(b,i)
+  b = util.round(b)
+  i = util.round(i)
   local pad = bank[b][i]
   if all_loaded then
-    mc.midi_note_from_pad(util.round(b),util.round(i))
+    mc.midi_note_from_pad(b,i)
     mc.route_midi_mod(b,i)
   end
   if env_counter[b].is_running then
@@ -3044,7 +3172,7 @@ function cheat(b,i)
     end
   end
   --/ OH ALL THIS SUCKS TODO FIXME
-  softcut.fade_time(b+1,variable_fade_time)
+  softcut.fade_time(b+1,params:get("loop_fade_time_"..b)/1000)
   softcut.loop_start(b+1,pad.start_point)
   softcut.loop_end(b+1,pad.end_point)
   softcut.buffer(b+1,pad.mode)
@@ -3060,10 +3188,10 @@ function cheat(b,i)
   end
   if pad.rate > 0 then
       -- softcut.position(b+1,pad.start_point+0.05)
-      softcut.position(b+1,pad.start_point+variable_fade_time)
+      softcut.position(b+1,pad.start_point+params:get("loop_fade_time_"..b)/1000)
   elseif pad.rate < 0 then
-      -- softcut.position(b+1,pad.end_point-variable_fade_time-0.05)
-      softcut.position(b+1,pad.end_point-variable_fade_time)
+      -- softcut.position(b+1,pad.end_point-params:get("loop_fade_time_"..b)/1000-0.05)
+      softcut.position(b+1,pad.end_point-params:get("loop_fade_time_"..b)/1000)
   end
   if slew_counter[b] ~= nil then
     slew_counter[b].next_tilt = pad.tilt
@@ -3072,14 +3200,14 @@ function cheat(b,i)
       if slew_counter[b].slewedVal ~= nil and math.floor(slew_counter[b].slewedVal*10000) ~= math.floor(slew_counter[b].next_tilt*10000) then
         if math.floor(slew_counter[b].prev_tilt*10000) ~= math.floor(slew_counter[b].slewedVal*10000) then
           slew_counter[b].interrupted = 1
-          slew_filter(util.round(b),slew_counter[b].slewedVal,slew_counter[b].next_tilt,slew_counter[b].prev_q,slew_counter[b].next_q,pad.tilt_ease_time)
+          slew_filter(b,slew_counter[b].slewedVal,slew_counter[b].next_tilt,slew_counter[b].prev_q,slew_counter[b].next_q,pad.tilt_ease_time)
         else
           slew_counter[b].interrupted = 0
-          slew_filter(util.round(b),slew_counter[b].prev_tilt,slew_counter[b].next_tilt,slew_counter[b].prev_q,slew_counter[b].next_q,pad.tilt_ease_time)
+          slew_filter(b,slew_counter[b].prev_tilt,slew_counter[b].next_tilt,slew_counter[b].prev_q,slew_counter[b].next_q,pad.tilt_ease_time)
         end
       end
     elseif pad.tilt_ease_type == 2 then
-      slew_filter(util.round(b),slew_counter[b].prev_tilt,slew_counter[b].next_tilt,slew_counter[b].prev_q,slew_counter[b].next_q,pad.tilt_ease_time)
+      slew_filter(b,slew_counter[b].prev_tilt,slew_counter[b].next_tilt,slew_counter[b].prev_q,slew_counter[b].next_q,pad.tilt_ease_time)
     end
   end
   softcut.pan(b+1,pad.pan)
@@ -3095,11 +3223,20 @@ function cheat(b,i)
   --   end
   -- end
   --dangerous??
-  local rate_array = {-4.0,-2.0,-1.0,-0.5,-0.25,-0.125,0.125,0.25,0.5,1.0,2.0,4.0}
-  local s = {}
-  for k,v in pairs(rate_array) do
-    s[v]=k
-  end
+  local s = {
+    [-4.0] = 1,
+    [-2.0] = 2,
+    [-1.0] = 3,
+    [-0.5] = 4,
+    [-0.25] = 5,
+    [-0.125] = 6,
+    [0.125] = 7,
+    [0.25] = 8,
+    [0.5] = 9,
+    [1.0] = 10,
+    [2.0] = 11,
+    [4.0] = 12
+  }
   if pad.fifth == false then
     if s[pad.rate] ~= nil then
       params:set("rate "..tonumber(string.format("%.0f",b)),s[pad.rate],true) -- TODO: confirm silent update is good...
@@ -3281,20 +3418,17 @@ function easing_slew(i)
   slew_counter[i].slewedQ = slew_counter[i].ease(slew_counter[i].current,slew_counter[i].beginQ,slew_counter[i].changeQ,slew_counter[i].duration)
   slew_counter[i].current = slew_counter[i].current + 0.01
   if grid_alt and all_loaded then
-    try_tilt_process(i,bank[i].id,slew_counter[i].slewedVal,slew_counter[i].slewedQ)
+    process_tilt("pad",i,bank[i].id,slew_counter[i].slewedVal,slew_counter[i].slewedQ)
   elseif all_loaded then
-    for j = 1,16 do
-      try_tilt_process(i,j,slew_counter[i].slewedVal,slew_counter[i].slewedQ)
-    end
+    process_tilt("bank",i,nil,slew_counter[i].slewedVal,slew_counter[i].slewedQ)
   end
   if menu == 5 then
     if menu ~= 1 then screen_dirty = true end
   end
 end
 
-function try_tilt_process(b,i,t,rq)
+local function local_tilt(b,i,t,rq)
   if util.round(t*100) < 0 then
-    local trill = math.abs(t)
     bank[b][i].cf_lp = math.abs(t)
     bank[b][i].cf_dry = 1+t
     if util.round(t*100) >= -24 then
@@ -3305,12 +3439,6 @@ function try_tilt_process(b,i,t,rq)
       bank[b][i].cf_exp_dry = 0
     end
     bank[b][i].cf_fc = util.linexp(0,1,16000,10,bank[b][i].cf_lp)
-    params:set("filter "..b.." cutoff",bank[b][i].cf_fc)
-    params:set("filter "..b.." lp", math.abs(bank[b][i].cf_exp_dry-1))
-    params:set("filter "..b.." dry", bank[b][i].cf_exp_dry)
-    if params:get("filter "..b.." hp") ~= 0 then
-      params:set("filter "..b.." hp", 0)
-    end
     if bank[b][i].cf_hp ~= 0 then
       bank[b][i].cf_hp = 0
     end
@@ -3319,12 +3447,6 @@ function try_tilt_process(b,i,t,rq)
     bank[b][i].cf_fc = util.linexp(0,1,10,12000,bank[b][i].cf_hp)
     bank[b][i].cf_dry = 1-t
     bank[b][i].cf_exp_dry = (util.linexp(0,1,1,101,bank[b][i].cf_dry)-1)/100
-    params:set("filter "..b.." cutoff",bank[b][i].cf_fc)
-    params:set("filter "..b.." hp", math.abs(bank[b][i].cf_exp_dry-1))
-    params:set("filter "..b.." dry", bank[b][i].cf_exp_dry)
-    if params:get("filter "..b.." lp") ~= 0 then
-      params:set("filter "..b.." lp", 0)
-    end
     if bank[b][i].cf_lp ~= 0 then
       bank[b][i].cf_lp = 0
     end
@@ -3334,6 +3456,33 @@ function try_tilt_process(b,i,t,rq)
     bank[b][i].cf_hp = 0
     bank[b][i].cf_dry = 1
     bank[b][i].cf_exp_dry = 1
+  end
+end
+
+function process_tilt(style,b,i,t,rq)
+  if style == "pad" then
+    local_tilt(b,i,t,rq)
+  elseif style == "bank" then
+    for j = 1,16 do
+      local_tilt(b,j,t,rq)
+    end
+  end
+  local focused_pad = style == "pad" and i or bank[b].id
+  if util.round(t*100) < 0 then
+    params:set("filter "..b.." cutoff",bank[b][focused_pad].cf_fc)
+    params:set("filter "..b.." lp", math.abs(bank[b][focused_pad].cf_exp_dry-1))
+    params:set("filter "..b.." dry", bank[b][focused_pad].cf_exp_dry)
+    if params:get("filter "..b.." hp") ~= 0 then
+      params:set("filter "..b.." hp", 0)
+    end
+  elseif util.round(t*100) > 0 then
+    params:set("filter "..b.." cutoff",bank[b][focused_pad].cf_fc)
+    params:set("filter "..b.." hp", math.abs(bank[b][focused_pad].cf_exp_dry-1))
+    params:set("filter "..b.." dry", bank[b][focused_pad].cf_exp_dry)
+    if params:get("filter "..b.." lp") ~= 0 then
+      params:set("filter "..b.." lp", 0)
+    end
+  elseif util.round(t*100) == 0 then
     params:set("filter "..b.." cutoff",12000)
     params:set("filter "..b.." lp", 0)
     params:set("filter "..b.." hp", 0)
@@ -3355,19 +3504,40 @@ function buff_freeze()
   end
 end
 
-function buff_flush()
-  softcut.buffer_clear_region_channel(1,rec[rec.focus].start_point, (rec[rec.focus].end_point-rec[rec.focus].start_point)+0.01)
-  rec[rec.focus].state = 0
-  rec[rec.focus].clear = 1
-  softcut.rec_level(1,0)
-  -- update_waveform(1,rec[rec.focus].start_point, rec[rec.focus].end_point,128)
-  if key1_hold then
-    update_waveform(1,rec[rec.focus].start_point, rec[rec.focus].end_point,128)
-  else
-    local points = {{1,9},{9,17},{17,25}}
-    update_waveform(1,points[rec.focus][1],points[rec.focus][2],128)
+function buff_flush(segment)
+  local points = {{1,9},{9,17},{17,25}}
+  softcut.buffer_clear_region_channel(1,rec[segment].start_point, (rec[segment].end_point-rec[segment].start_point)+0.01)
+  rec[segment].state = 0
+  rec[segment].clear = 1
+  if poll_position_new[1] >= points[segment][1] and poll_position_new[1] <= points[segment][2] then
+    softcut.rec_level(1,0)
   end
+  -- update_waveform(1,rec[segment].start_point, rec[segment].end_point,128)
   grid_dirty = true
+  if buff_purge(segment) then
+    softcut.buffer_clear_region_channel(1,points[segment][1], (points[segment][2]-points[segment][1])+0.01)
+    if params:string("live_purge_resets_loop_"..segment) == "yes" then
+      rec[segment].start_point = points[segment][1]
+      rec[segment].end_point = points[segment][2]
+      if poll_position_new[1] >= points[segment][1] and poll_position_new[1] <= points[segment][2] then
+        softcut.loop_start(1,rec[segment].start_point)
+        softcut.loop_end(1,rec[segment].end_point)
+      end
+    end
+  end
+  if key1_hold then
+    update_waveform(1,rec[segment].start_point, rec[segment].end_point,128)
+  else
+    update_waveform(1,points[segment][1],points[segment][2],128)
+  end
+end
+
+function buff_purge(segment)
+  if util.time() - rec[segment].last_purged < 0.25 then
+    return true
+  else
+    rec[segment].last_purged = util.time()
+  end
 end
 
 function buff_pause()
@@ -3396,10 +3566,9 @@ function threshold_rec_handler()
   end
 end
 
-function toggle_buffer(i,untrue_alt)
+function toggle_buffer(i,untrue_alt,delayed)
 
   grid_dirty = true
-  
   local old_clip = rec.focus
 
   for j = 1,3 do
@@ -3410,49 +3579,70 @@ function toggle_buffer(i,untrue_alt)
 
   rec.focus = i
 
-  if rec[rec.focus].loop == 0 and params:string("one_shot_clock_div") == "threshold" and rec[rec.focus].queued then
-    softcut.level_slew_time(1,0)
-    softcut.fade_time(1,0)
-    one_shot_clock()
-  else
-    softcut.level_slew_time(1,0.05)
-    softcut.fade_time(1,0.01)
-    if rec[rec.focus].loop == 0 and not grid_alt then
-      if rec[rec.focus].state == 0 then
-        run_one_shot_rec_clock() -- this runs only if not recording
-      elseif rec[rec.focus].state == 1 and rec_state_watcher.is_running then -- can have both conditions, right?
-        cancel_one_shot_rec_clock()
-      end
-    elseif rec[rec.focus].loop == 0 and (grid_alt and untrue_alt ~= nil) then
-      -- buff_flush()
-    elseif rec[rec.focus].loop == 1 and not grid_alt then
-      if one_shot_rec_clock ~= nil then
-        cancel_one_shot_rec_clock()
-      end
-      softcut.loop_start(1,rec[rec.focus].start_point)
-      softcut.loop_end(1,rec[rec.focus].end_point-0.01)
+  local punch_out = false
+
+  -- if params:string("rec_loop_"..rec.focus) == "1-shot" then
+    if params:string("one_shot_punch") == "yes" and rec[rec.focus].state == 1 then
+      punch_out = true
     end
-  end
-  
-  rec.play_segment = rec.focus
-  softcut.loop(1,rec[rec.focus].loop)
-  if rec.stopped == true then
-    rec.stopped = false
-    if rec[rec.focus].loop == 1 then
-      softcut.position(1,rec[rec.focus].start_point)
-    end
-  end
-  if rec[rec.focus].loop == 1 then
-    if old_clip ~= rec.focus then rec[rec.focus].state = 0 end
-    buff_freeze()
-    if rec[rec.focus].clear == 1 then
-      rec[rec.focus].clear = 0
-    end
-  end
   -- end
-  grid_dirty = true
-  update_waveform(1,key1_hold and rec[rec.focus].start_point or live[rec.focus].min,key1_hold and rec[rec.focus].end_point or live[rec.focus].max,128)
-  -- update_waveform(1,live[rec.focus].min,live[rec.focus].max,128)
+
+  if params:string("start_rec_loop_at_launch") == "no"
+  or (params:string("start_rec_loop_at_launch") == "yes" and transport.is_running)
+  or (params:string("start_rec_loop_at_launch") == "yes" and not transport.is_running and rec[rec.focus].state == 1)
+  then
+    if rec[rec.focus].loop == 0 and params:string("one_shot_clock_div") == "threshold" and rec[rec.focus].queued then
+      softcut.level_slew_time(1,0)
+      softcut.fade_time(1,0)
+      one_shot_clock()
+    else
+      softcut.level_slew_time(1,0.05)
+      softcut.fade_time(1,0.01)
+      if rec[rec.focus].loop == 0 and not grid_alt then
+        if rec[rec.focus].state == 0 then
+          run_one_shot_rec_clock() -- this runs only if not recording
+        elseif rec[rec.focus].state == 1 and rec_state_watcher.is_running then -- can have both conditions, right?
+          cancel_one_shot_rec_clock(punch_out)
+        end
+      elseif rec[rec.focus].loop == 0 and (grid_alt and untrue_alt ~= nil) then
+        -- buff_flush()
+      elseif rec[rec.focus].loop == 1 and not grid_alt then
+        if one_shot_rec_clock ~= nil then
+          cancel_one_shot_rec_clock(punch_out)
+        end
+        softcut.loop_start(1,rec[rec.focus].start_point)
+        softcut.loop_end(1,rec[rec.focus].end_point-0.01)
+      end
+    end
+    
+    rec.play_segment = rec.focus
+    softcut.loop(1,rec[rec.focus].loop)
+    if rec.stopped == true then
+      rec.stopped = false
+      if rec[rec.focus].loop == 1 then
+        softcut.position(1,rec[rec.focus].start_point)
+      end
+    end
+    if rec[rec.focus].loop == 1 then
+      if old_clip ~= rec.focus then rec[rec.focus].state = 0 end
+      buff_freeze()
+      if rec[rec.focus].clear == 1 then
+        rec[rec.focus].clear = 0
+      end
+    end
+    -- end
+    grid_dirty = true
+    update_waveform(1,key1_hold and rec[rec.focus].start_point or live[rec.focus].min,key1_hold and rec[rec.focus].end_point or live[rec.focus].max,128)
+    -- update_waveform(1,live[rec.focus].min,live[rec.focus].max,128)
+  else
+    if rec.transport_queued == nil then
+      rec.transport_queued = true
+      rec[rec.focus].queued = true
+    else
+      rec.transport_queued = not rec.transport_queued
+      rec[rec.focus].queued = false
+    end
+  end
 end
 
 function update_delays()
@@ -3481,12 +3671,13 @@ function load_sample(file,sample)
   local old_min = clip[sample].min
   local old_max = clip[sample].max
   if file ~= "-" then
-    local ch, len = audio.file_info(file)
+    local ch, len, sr = audio.file_info(file)
     if len/48000 < 32 then
       clip[sample].sample_length = len/48000
     else
       clip[sample].sample_length = 32
     end
+    clip[sample].sample_rate = sr
     softcut.buffer_clear_region_channel(2,1+(32*(sample-1)),32)
     softcut.buffer_read_mono(file, 0, 1+(32*(sample-1)),clip[sample].sample_length + 0.05, 1, 2)
     -- softcut.buffer_read_mono(file, 0, 1+(32*(sample-1)),clip[sample].sample_length, 1, 2)
@@ -3498,6 +3689,12 @@ function load_sample(file,sample)
         end
       end
     end
+    if util.file_exists(_path.code.."zxcvbn/lib/aubiogo/aubiogo") then
+      params:show('detect_onsets_'..sample)
+      params:hide('clear_onsets_'..sample)
+      _menu.rebuild_params()
+    end
+    cursors[sample] = {}
   end
   for i = 1,3 do
     pre_cc2_sample[i] = false
@@ -3768,7 +3965,9 @@ function key(n,z)
           key2_hold_and_modify = true
         else
           if time_nav >= 1 and time_nav < 4 then
-            if g.device == nil and grid_pat[time_nav].count == 0 then
+            if get_grid_connected() or osc_communication then
+              grid_actions.grid_pat_handler(id)
+            else
               if page.time_page_sel[time_nav] == 1 then
                 if midi_pat[time_nav].playmode < 3 then
                   if midi_pat[time_nav].rec == 0 then
@@ -3785,7 +3984,7 @@ function key(n,z)
             end
             if page.time_page_sel[time_nav] == 2 then
               -- if g.device ~= nil then
-              if get_grid_connected() then
+              if get_grid_connected() or osc_communication then
                 random_grid_pat(id,2)
               else
                 shuffle_midi_pat(id)
@@ -3793,7 +3992,7 @@ function key(n,z)
             elseif page.time_page_sel[time_nav] == 4 then
               if not key1_hold then
                 -- if g.device ~= nil then
-                if get_grid_connected() then
+                if get_grid_connected() or osc_communication then
                   random_grid_pat(id,3)
                 else
                   random_midi_pat(id)
@@ -3855,6 +4054,7 @@ function key(n,z)
 
         if key1_hold then
           rytm.reset_pattern(rytm.track_edit)
+          -- params:set("euclid_mute_"..rytm.track_edit,params:get("euclid_mute_"..rytm.track_edit) == 0 and 1 or 0)
         else
           rytm.screen_focus = rytm.screen_focus == "left" and "right" or "left"
         end
@@ -3923,12 +4123,12 @@ function key(n,z)
         end
       elseif (menu == 2 or menu == 7 or menu == 9) and not key1_hold then
         -- key2_hold = true
-        key2_hold_counter:start()
+        key2_hold_counter = clock.run(count_key2)
         key2_hold_and_modify = false
       elseif menu == 2 then
         if page.loops.frame == 2 and key1_hold then
           if page.loops.sel == 4 then
-            buff_flush()
+            buff_flush(rec.focus)
             -- print("press")
           elseif page.loops.sel < 4 then
             sync_clock_to_loop(bank[page.loops.sel][bank[page.loops.sel].id],"audio")
@@ -3953,7 +4153,7 @@ function key(n,z)
         end
       end
     elseif n == 2 and z == 0 and key2_hold == false and (menu == 2 or menu == 7 or menu == 9) and not key1_hold then
-      key2_hold_counter:stop()
+      clock.cancel(key2_hold_counter)
       menu = 1
     elseif n == 2 and z == 0 and key2_hold_and_modify then
       key2_hold = false
@@ -4035,7 +4235,7 @@ function key(n,z)
         key1_hold = true
       elseif menu == 9 then
         key1_hold = true
-        page.arp_alt[page.arp_page_sel] = not page.arp_alt[page.arp_page_sel]
+        arp[page.arp_page_sel].alt = not arp[page.arp_page_sel].alt
       else
         key1_hold = true
         if menu == 2 and page.loops.sel < 4 and page.loops.frame == 2 and not key2_hold then
@@ -4180,26 +4380,73 @@ function redraw()
   screen.level(15)
   screen.font_size(8)
   main_menu.init()
+  if detecting_onsets_popup.state then
+    screen.rect(1,11,127,44)
+    screen.level(15)
+    screen.fill()
+    screen.rect(2,12,125,42)
+    screen.level(0)
+    screen.fill()
+    screen.level(15)
+    screen.font_size(8)
+    screen.move(64,25)
+    screen.text_center('detecting onsets:')
+    screen.font_size(15)
+    if clip[detecting_onsets_popup.id].sample_rate < 48000 then
+      screen.move(64,42)
+    else
+      screen.move(64,44)
+    end
+    screen.text_center(detecting_onsets_popup.percent..'%')
+    screen.font_size(8)
+    if clip[detecting_onsets_popup.id].sample_rate < 48000 then
+      screen.move(64,52)
+      screen.text_center('use 48khz for best results')
+    end
+  elseif detected_onsets_popup.state then
+    screen.rect(1,11,127,44)
+    screen.level(15)
+    screen.fill()
+    screen.rect(2,12,125,42)
+    screen.level(0)
+    screen.fill()
+    screen.level(15)
+    screen.font_size(8)
+    screen.move(64,28)
+    screen.font_size(15)
+    screen.text_center('onsets')
+    if detected_onsets_popup.id ~= nil and clip[detected_onsets_popup.id].sample_rate < 48000 then
+      screen.move(64,42)
+    else
+      screen.move(64,45)
+    end
+    screen.text_center('detected!')
+    screen.font_size(8)
+    if detected_onsets_popup.id ~= nil and clip[detected_onsets_popup.id].sample_rate < 48000 then
+      screen.move(64,52)
+      screen.text_center('use 48khz for best results')
+    end
+  end
   screen.update()
 end
 
 --GRID
-g = grid.connect()
+g = grid_device.connect()
 
 function get_grid_connected()
-  if grid.is_midigrid ~= nil and grid.is_midigrid == true then
+  if grid_device.is_midigrid ~= nil and grid_device.is_midigrid == true then
     params:set("midigrid?",2)
   end
-  if g.device == nil and grid == nil then
+  if g.device == nil and grid_device == nil then
     return false
-  elseif g.device ~= nil or (grid ~= nil and params:string("midigrid?") == "yes") then
+  elseif g.device ~= nil or (grid_device ~= nil and params:string("midigrid?") == "yes") then
     return true
   else
     return false
   end
 end
 
-function grid.add(dev)
+function grid_device.add(dev)
   grid_dirty = true
 end
 
@@ -4425,7 +4672,7 @@ end
 function grid_redraw()
   -- if g.device ~= nil then
   if get_grid_connected() then
-    if params:string("grid_size") == "128" then
+    if params:string("grid_size") == "128/256" then
       g:all(0)
       local edition = params:get("LED_style")
       
@@ -4587,9 +4834,9 @@ function grid_redraw()
         end
         
         if rec[rec.focus].clear == 0 then
-          g:led(16,8-rec.focus,rec[rec.focus].state == 1 and led_maps["live_rec"][edition] or (rec[rec.focus].queued and 15 or led_maps["live_pause"][edition]))
+          g:led(16,8-rec.focus,rec[rec.focus].state == 1 and led_maps["live_rec"][edition] or ((rec[rec.focus].queued or rec.transport_queued) and 15 or led_maps["live_pause"][edition]))
         elseif rec[rec.focus].clear == 1 then
-          g:led(16,8-rec.focus,rec[rec.focus].queued and 9 or led_maps["live_empty"][edition])
+          g:led(16,8-rec.focus,(rec[rec.focus].queued or rec.transport_queued) and 9 or led_maps["live_empty"][edition])
         end
       
       elseif grid_page == 1 then
@@ -5574,6 +5821,7 @@ function count_lines_in(file)
 end
 
 function persistent_state_restore()
+  all_loaded = false
   local file = io.open(_path.data .. "cheat_codes_2/persistent_state.data", "r")
   if file then
     io.input(file)
@@ -5646,27 +5894,39 @@ function pre_delete(text)
 end
 
 function pre_save(text)
-  local name_filepath = _path.data.."cheat_codes_2/names/"
-  existing_names = {}
-  for i in io.popen("ls "..name_filepath):lines() do
-    if string.find(i,"%.cc2$") then table.insert(existing_names,name_filepath..i) end
-  end
-  if text ~= 'cancel' and text ~= nil and not tab.contains(existing_names,"/home/we/dust/data/cheat_codes_2/names/"..text..".cc2") then
-    collection_save_clock = clock.run(save_screen,text)
-    _norns.key(1,1)
-    _norns.key(1,0)
-  elseif text == 'cancel' or text == nil then
-    print("canceled, nothing saved")
-  elseif tab.contains(existing_names,"/home/we/dust/data/cheat_codes_2/names/"..text..".cc2") then
-    print(text.." already used, will not overwrite")
-    clock.run(save_fail_screen,text)
-    _norns.key(1,1)
-    _norns.key(1,0)
+  if text ~= nil then
+    local name_filepath = _path.data.."cheat_codes_2/names/"
+    existing_names = {}
+    for i in io.popen("ls "..name_filepath):lines() do
+      if string.find(i,"%.cc2$") then table.insert(existing_names,name_filepath..i) end
+    end
+    local concat = ""
+    for word in string.gmatch(text, "%S+") do
+      if concat == "" then
+        concat = word
+      else
+        concat = (concat.."-"..word)
+      end
+    end
+    text = concat
+    if text ~= 'cancel' and text ~= nil and not tab.contains(existing_names,"/home/we/dust/data/cheat_codes_2/names/"..text..".cc2") then
+      print("attempting to save collection '"..text.."'")
+      collection_save_clock = clock.run(save_screen,text)
+      _norns.key(1,1)
+      _norns.key(1,0)
+    elseif text == 'cancel' or text == nil then
+      print("canceled, nothing saved")
+    elseif tab.contains(existing_names,"/home/we/dust/data/cheat_codes_2/names/"..text..".cc2") then
+      print(text.." already used, will not overwrite")
+      clock.run(save_fail_screen,text)
+      _norns.key(1,1)
+      _norns.key(1,0)
+    end
   end
 end
 
 function named_savestate(text)
-  
+  save_fail_state = false
   local collection = text
   local dirname = _path.data.."cheat_codes_2/"
   -- local collection = tonumber(string.format("%.0f",params:get("collection")))
@@ -5679,150 +5939,238 @@ function named_savestate(text)
     os.execute("mkdir " .. dirname)
   end
   local name_file = io.open(_path.data .. "cheat_codes_2/names/"..collection..".cc2", "w+")
-  io.output(name_file)
-  io.write(collection)
-  io.close(name_file)
+  if name_file then
+    io.output(name_file)
+    io.write(collection)
+    io.close(name_file)
   
-  local dirname = _path.data.."cheat_codes_2/collection-"..collection.."/"
-  if os.rename(dirname, dirname) == nil then
-    os.execute("mkdir " .. dirname)
-  end
-
-  local dirnames = {"banks/","params/","arc-rec/","patterns/","step-seq/","arps/","euclid/","rnd/","delays/","rec/","misc/","midi_output_maps/","macros/"}
-  for i = 1,#dirnames do
-    local directory = _path.data.."cheat_codes_2/collection-"..collection.."/"..dirnames[i]
-    if os.rename(directory, directory) == nil then
-      os.execute("mkdir " .. directory)
+    local dirname = _path.data.."cheat_codes_2/collection-"..collection.."/"
+    if os.rename(dirname, dirname) == nil then
+      os.execute("mkdir " .. dirname)
     end
-  end
 
-  for i = 1,3 do
-    tab.save(bank[i],_path.data .. "cheat_codes_2/collection-"..collection.."/banks/"..i..".data")
-    tab.save(step_seq[i],_path.data .. "cheat_codes_2/collection-"..collection.."/step-seq/"..i..".data")
-    tab.save(arp[i],_path.data .. "cheat_codes_2/collection-"..collection.."/arps/"..i..".data")
-    tab.save(rytm.track[i],_path.data .. "cheat_codes_2/collection-"..collection.."/euclid/euclid"..i..".data")
-    tab.save(rnd[i],_path.data .. "cheat_codes_2/collection-"..collection.."/rnd/"..i..".data")
-    if params:get("collect_live") == 2 then
-      collect_samples(i,collection)
-    end
-  end
-
-  for i = 1,2 do
-    tab.save(delay[i],_path.data .. "cheat_codes_2/collection-"..collection.."/delays/delay"..(i == 1 and "L" or "R")..".data")
-  end
-  tab.save(delay_links,_path.data .. "cheat_codes_2/collection-"..collection.."/delays/delay-links.data")
-  
-  params:write(_path.data.."cheat_codes_2/collection-"..collection.."/params/all.pset")
-  
-  -- ultimately, i'll want to remember the mappings of specific devices for specific collections...
-  -- norns.pmap.rev[dev][ch][cc]
-  -- dev = vport ID...
-  -- so, see if there are any mappings and if not then ignore that shit...
-  -- otherwise, grab the device name
-  -- if the device is present, then the mapping can restore
-  -- if not, fuck it.
-  -- might also need to `norns.pmap.assign(name,m.dev,m.ch,m.cc)`
-
-  mc.save_mappings(collection)
-
-  tab.save(rec,_path.data .. "cheat_codes_2/collection-"..collection.."/rec/rec[rec.focus].data")
-
-  -- GRID pattern save
-  if selected_coll ~= collection then
-    meta_copy_coll(selected_coll,collection)
-  end
-  meta_shadow(collection)
-
-  selected_coll = collection
-  --/ GRID pattern save
-
-  -- MIDI pattern save
-  for i = 1,3 do
-    save_midi_pattern(i)
-  end
-  --/ MIDI pattern save
-
-  -- ARC rec save
-  local arc_rec_dirty = {false,false,false}
-  for i = 1,3 do
-    for j = 1,4 do
-      if arc_pat[i][j].count > 0 then
-        arc_rec_dirty[i] = true
+    local dirnames = {"banks/","params/","arc-rec/","patterns/","step-seq/","arps/","euclid/","rnd/","delays/","rec/","misc/","midi_output_maps/","macros/","cursors/"}
+    for i = 1,#dirnames do
+      local directory = _path.data.."cheat_codes_2/collection-"..collection.."/"..dirnames[i]
+      if os.rename(directory, directory) == nil then
+        os.execute("mkdir " .. directory)
       end
     end
-    if arc_rec_dirty[i] then
-      save_arc_pattern(i)
-    else
-      local file = io.open(_path.data .. "cheat_codes_2/collection-"..selected_coll.."/arc-rec/encoder-"..i..".data", "r")
-      if file then
-        io.input(file)
-        os.remove(_path.data .. "cheat_codes_2/collection-"..selected_coll.."/arc-rec/encoder-"..i..".data")
-        io.close(file)
-      end
-    end
-  end
-  --/ ARC rec save
 
-  -- misc save
-  local file = io.open(_path.data .. "cheat_codes_2/collection-"..selected_coll.."/misc/misc.data", "w+")
-  if file then
-    io.output(file)
-    io.write("clock_tempo: "..params:get("clock_tempo").."\n")
     for i = 1,3 do
-      io.write("pattern_"..i.."_playmode: "..grid_pat[i].playmode.."\n")
-      io.write("pattern_"..i.."_rec_clock_time: "..grid_pat[i].rec_clock_time.."\n")
-    end
-    io.close(file)
-  end
-
-  for i = 1,3 do
-    local directory = _path.data.."cheat_codes_2/collection-"..selected_coll.."/midi_output_maps/bank_"..i.."/"
-    if os.rename(directory, directory) == nil then
-      os.execute("mkdir " .. directory)
-    end
-  end
-  --/ misc save
-
-  -- midi_output_maps save
-  local mc_tables =
-  {
-    "midi_notes"
-  , "midi_notes_channels"
-  , "midi_notes_velocities"
-  , "midi_ccs"
-  , "midi_ccs_channels"
-  , "midi_ccs_values"
-  }
-  
-  for i = 1,3 do
-    for j = 1,#mc_tables do
-      local mc_filepath = _path.data .. "cheat_codes_2/collection-"..selected_coll.."/midi_output_maps/bank_"..i.."/"..mc_tables[j]..".data"
-      local file = io.open(mc_filepath, "w+")
-      if file then
-        io.output(file)
-        tab.save(mc[mc_tables[j]][i].entries,mc_filepath)
-        io.close(file)
+      tab.save(bank[i],_path.data .. "cheat_codes_2/collection-"..collection.."/banks/"..i..".data")
+      tab.save(step_seq[i],_path.data .. "cheat_codes_2/collection-"..collection.."/step-seq/"..i..".data")
+      tab.save(arp[i],_path.data .. "cheat_codes_2/collection-"..collection.."/arps/"..i..".data")
+      tab.save(rytm.track[i],_path.data .. "cheat_codes_2/collection-"..collection.."/euclid/euclid"..i..".data")
+      tab.save(rnd[i],_path.data .. "cheat_codes_2/collection-"..collection.."/rnd/"..i..".data")
+      if params:get("collect_live") == 2 then
+        collect_samples(i,collection)
       end
     end
-  end
 
-  for i = 1,8 do
-    local macro_filepath = _path.data .. "cheat_codes_2/collection-"..selected_coll.."/macros/"..i..".data"
-    local file = io.open(macro_filepath, "w+")
+    for i = 1,2 do
+      tab.save(delay[i],_path.data .. "cheat_codes_2/collection-"..collection.."/delays/delay"..(i == 1 and "L" or "R")..".data")
+      tab.save(delay_bundle[i],_path.data .. "cheat_codes_2/collection-"..collection.."/delays/delay_bundle"..(i == 1 and "L" or "R")..".data")
+    end
+    tab.save(delay_links,_path.data .. "cheat_codes_2/collection-"..collection.."/delays/delay-links.data")
+    
+    params:write(_path.data.."cheat_codes_2/collection-"..collection.."/params/all.pset")
+    
+    -- ultimately, i'll want to remember the mappings of specific devices for specific collections...
+    -- norns.pmap.rev[dev][ch][cc]
+    -- dev = vport ID...
+    -- so, see if there are any mappings and if not then ignore that shit...
+    -- otherwise, grab the device name
+    -- if the device is present, then the mapping can restore
+    -- if not, fuck it.
+    -- might also need to `norns.pmap.assign(name,m.dev,m.ch,m.cc)`
+
+    mc.write_mappings(collection)
+
+    tab.save(rec,_path.data .. "cheat_codes_2/collection-"..collection.."/rec/rec[rec.focus].data")
+
+    -- GRID pattern save
+    if selected_coll ~= collection then
+      meta_copy_coll(selected_coll,collection)
+    end
+    meta_shadow(collection)
+
+    selected_coll = collection
+    --/ GRID pattern save
+
+    -- MIDI pattern save
+    for i = 1,3 do
+      save_midi_pattern(i)
+    end
+    
+    -- local check_file = io.open(_path.data .. "cheat_codes_2/collection-"..selected_coll.."/patterns/midi3.data", "w+")
+    local check_file = util.file_exists(_path.data .. "cheat_codes_2/collection-"..selected_coll.."/patterns/midi3.data")
+    if not check_file then
+      save_fail_state = true
+      goto failed_save
+    end
+    --/ MIDI pattern save
+
+    -- ARC rec save
+    local arc_rec_dirty = {false,false,false}
+    for i = 1,3 do
+      for j = 1,4 do
+        if arc_pat[i][j].count > 0 then
+          arc_rec_dirty[i] = true
+        end
+      end
+      if arc_rec_dirty[i] then
+        save_arc_pattern(i)
+      else
+        local file = io.open(_path.data .. "cheat_codes_2/collection-"..selected_coll.."/arc-rec/encoder-"..i..".data", "r")
+        if file then
+          io.input(file)
+          os.remove(_path.data .. "cheat_codes_2/collection-"..selected_coll.."/arc-rec/encoder-"..i..".data")
+          io.close(file)
+        end
+      end
+    end
+    --/ ARC rec save
+
+    -- misc save
+    local file = io.open(_path.data .. "cheat_codes_2/collection-"..selected_coll.."/misc/misc.data", "w+")
     if file then
       io.output(file)
-      tab.save(macro[i].params,macro_filepath)
+      io.write("clock_tempo: "..params:get("clock_tempo").."\n")
+      for i = 1,3 do
+        io.write("pattern_"..i.."_playmode: "..grid_pat[i].playmode.."\n")
+        io.write("pattern_"..i.."_rec_clock_time: "..grid_pat[i].rec_clock_time.."\n")
+      end
       io.close(file)
+    end
+
+    for i = 1,3 do
+      local directory = _path.data.."cheat_codes_2/collection-"..selected_coll.."/midi_output_maps/bank_"..i.."/"
+      if os.rename(directory, directory) == nil then
+        os.execute("mkdir " .. directory)
+      end
+    end
+    --/ misc save
+
+    -- midi_output_maps save
+    local mc_tables =
+    {
+      "midi_notes"
+    , "midi_notes_channels"
+    , "midi_notes_velocities"
+    , "midi_ccs"
+    , "midi_ccs_channels"
+    , "midi_ccs_values"
+    }
+    
+    for i = 1,3 do
+      for j = 1,#mc_tables do
+        local mc_filepath = _path.data .. "cheat_codes_2/collection-"..selected_coll.."/midi_output_maps/bank_"..i.."/"..mc_tables[j]..".data"
+        local file = io.open(mc_filepath, "w+")
+        if file then
+          io.output(file)
+          tab.save(mc[mc_tables[j]][i].entries,mc_filepath)
+          io.close(file)
+        end
+      end
+    end
+
+    for i = 1,8 do
+      local macro_filepath = _path.data .. "cheat_codes_2/collection-"..selected_coll.."/macros/"..i..".data"
+      local file = io.open(macro_filepath, "w+")
+      if file then
+        io.output(file)
+        tab.save(macro[i].params,macro_filepath)
+        io.close(file)
+      end
+    end
+
+    for i = 1,3 do
+      local cursor_filepath = _path.data .. "cheat_codes_2/collection-"..selected_coll.."/cursors/"..i..".data"
+      local file = io.open(cursor_filepath, "w+")
+      if file then
+        io.output(file)
+        tab.save(cursors[i],cursor_filepath)
+        io.close(file)
+      end
+    end
+
+  else
+    -- print("bad name, runnign cannpt save from named_savestate")
+    save_fail_state = true
+    clock.run(cannot_save_screen,text)
+    _norns.key(1,1)
+    _norns.key(1,0)
+  end
+  ::failed_save::
+  if save_fail_state then
+    -- print("should delete file")
+    local name_filepath = _path.data.."cheat_codes_2/names/"
+    existing_names = {}
+    for i in io.popen("ls "..name_filepath):lines() do
+      if string.find(i,"%.cc2$") then table.insert(existing_names,name_filepath..i) end
+    end
+    if tab.contains(existing_names,'/home/we/dust/data/cheat_codes_2/names/'..text..'.cc2') then
+      table.remove(existing_names,tab.key(existing_names,'/home/we/dust/data/cheat_codes_2/names/'..text..'.cc2'))
+      if util.file_exists(_path.data .. 'cheat_codes_2/names/'..text..'.cc2') then
+        -- print("deleting name file")
+        os.remove(_path.data .. 'cheat_codes_2/names/'..text..'.cc2')
+      end
+      -- print(bad_file)
+    end
+    local bad_file = util.file_exists(_path.data.."cheat_codes_2/collection-"..text.."/")
+    if bad_file then
+      print("removing associated collection folder for misformatted name")
+      os.remove(_path.data.."cheat_codes_2/collection-"..text.."/")
+    end
+  end
+  --/ midi_output_maps save
+
+end
+
+function fix_all_the_bad_names(path,collection)
+
+  local filename = _path.data.."cheat_codes_2/collection-"..collection.."/params/all.pset"
+
+  local function unquote(s)
+    return s:gsub('^"', ''):gsub('"$', ''):gsub('\\"', '"')
+  end
+
+  local fd = io.open(filename, "r")
+  if fd then
+    io.close(fd)
+    already_assigned = {}
+    for line in io.lines(filename) do
+      local id, value = string.match(line, "(\".-\")%s*:%s*(.*)")
+      if id and value then
+        id = unquote(id)
+        local index = params.lookup[id]
+        if already_assigned[id] == nil then
+          if index and params.params[index] then
+            if tonumber(value) ~= nil then
+              params.params[index]:set(tonumber(value), silent)
+            elseif value == "-inf" then
+              params.params[index]:set(-math.huge, silent)
+            elseif value == "inf" then
+              params.params[index]:set(math.huge, silent)
+            elseif value then
+              params.params[index]:set(value, silent)
+            end
+            already_assigned[id] = true
+          end
+        end
+      end
     end
   end
 
-  --/ midi_output_maps save
+  -- params:read(_path.data.."cheat_codes_2/collection-"..collection.."/params/all.pset")
 
 end
 
 function named_loadstate(path)
   local file = io.open(path, "r")
   if file then
+    actively_loading_collection = true
     splash_done = false
     print("loading...")
     for j = 1,3 do
@@ -5849,7 +6197,7 @@ function named_loadstate(path)
     _norns.key(1,0)
     screen_dirty = true
     -- all_loaded = false
-    params:read(_path.data.."cheat_codes_2/collection-"..collection.."/params/all.pset")
+    fix_all_the_bad_names(path,collection)
     -- persistent_state_restore()
     if tab.load(_path.data .. "cheat_codes_2/collection-"..collection.."/rec/rec[rec.focus].data") ~= nil then
       rec = tab.load(_path.data .. "cheat_codes_2/collection-"..collection.."/rec/rec[rec.focus].data")
@@ -5857,6 +6205,12 @@ function named_loadstate(path)
       if rec.play_segment == nil then rec.play_segment = rec.focus end
       softcut.loop_start(1,rec[rec.focus].start_point)
       softcut.loop_end(1,rec[rec.focus].end_point-0.01)
+      for i = 1,3 do
+        rec[i].last_purged = 0
+      end
+      if rec[rec.focus].state == 1 then
+        rec[rec.focus].state = 0
+      end
     end
     for i = 1,3 do
       if tab.load(_path.data .. "cheat_codes_2/collection-"..collection.."/banks/"..i..".data") ~= nil then
@@ -5878,7 +6232,7 @@ function named_loadstate(path)
       if tab.load(_path.data .. "cheat_codes_2/collection-"..collection.."/rnd/"..i..".data") ~= nil then
         rnd[i] = tab.load(_path.data .. "cheat_codes_2/collection-"..collection.."/rnd/"..i..".data")
         for j = 1,#rnd[i] do
-          rnd[i][j].lattice = rnd_lattice:new_pattern{
+          rnd[i][j].lattice = rnd_lattice:new_sprocket{
             action = function() rnd.lattice_advance(i,j) end,
             division = rnd[i][j].time/4,
             enabled = true
@@ -5897,7 +6251,7 @@ function named_loadstate(path)
       }
 
       for j = 1,#mc_tables do
-        if tab.load(_path.data .. "cheat_codes_2/collection-"..collection.."/midi_output_maps/bank_"..i.."/"..mc_tables[j]..".data") ~= nil then
+        if util.file_exists(_path.data .. "cheat_codes_2/collection-"..collection.."/midi_output_maps/bank_"..i.."/"..mc_tables[j]..".data") then
           mc[mc_tables[j]][i].entries = tab.load(_path.data .. "cheat_codes_2/collection-"..collection.."/midi_output_maps/bank_"..i.."/"..mc_tables[j]..".data")
         end
       end
@@ -5906,7 +6260,7 @@ function named_loadstate(path)
         reload_collected_samples(_path.dust.."audio/cc2_live-audio/"..collection.."/".."cc2_"..collection.."-"..i..".wav",i)
       end
       
-      if tab.load(_path.data .. "cheat_codes_2/collection-"..collection.."/euclid/euclid"..i..".data") ~= nil then
+      if util.file_exists(_path.data .. "cheat_codes_2/collection-"..collection.."/euclid/euclid"..i..".data") then
         rytm.track[i] = tab.load(_path.data .. "cheat_codes_2/collection-"..collection.."/euclid/euclid"..i..".data")
         if rytm.track[i].runner == nil then rytm.track[i].runner = 0 end
       end
@@ -5926,6 +6280,12 @@ function named_loadstate(path)
     for i = 1,2 do
       if tab.load(_path.data .. "cheat_codes_2/collection-"..collection.."/delays/delay"..(i == 1 and "L" or "R")..".data") ~= nil then
         delay[i] = tab.load(_path.data .. "cheat_codes_2/collection-"..collection.."/delays/delay"..(i == 1 and "L" or "R")..".data")
+        if util.file_exists(_path.data .. "cheat_codes_2/collection-"..collection.."/delays/delay_bundle"..(i == 1 and "L" or "R")..".data") then
+          delay_bundle[i] = tab.load(_path.data .. "cheat_codes_2/collection-"..collection.."/delays/delay_bundle"..(i == 1 and "L" or "R")..".data")
+          if delay[i].selected_bundle ~= 0 and delay_bundle[i][delay[i].selected_bundle].saved then
+            del.restore_bundle(i,delay[i].selected_bundle)
+          end
+        end
       end
     end
 
@@ -5980,6 +6340,8 @@ function named_loadstate(path)
         end
       end
       io.close(file)
+      print('loaded')
+      actively_loading_collection = false
     end
 
   else
@@ -5989,12 +6351,45 @@ function named_loadstate(path)
     clock.run(load_fail_screen)
   end
 
+  for i = 1,3 do
+    local dirname = _path.data .. "cheat_codes_2/collection-"..selected_coll.."/cursors/"..i..".data"
+    if os.rename(dirname, dirname) ~= nil then
+      cursors[i] = tab.load(dirname)
+      if #cursors[i] > 0 then
+        params:hide('detect_onsets_'..i)
+        params:show('clear_onsets_'..i)
+        detecting_onsets_popup = {state = false, percent = nil}
+        _menu.rebuild_params()
+      end
+    end
+  end
+
+
   ping_midi_devices()
   if file then
-    if tab.load(_path.data .. "cheat_codes_2/collection-"..selected_coll.."/params/mappings.txt") ~= nil then
+    if util.file_exists(_path.data .. "cheat_codes_2/collection-"..selected_coll.."/params/mappings.txt") then
       norns.pmap.rev = tab.load(_path.data .. "cheat_codes_2/collection-"..selected_coll.."/params/mappings.txt")
+      print('>>>>'..#norns.pmap.rev)
+      if #norns.pmap.rev < 16 then
+        print('less than 16')
+        for i = #norns.pmap.rev+1,16 do
+          norns.pmap.rev[i] = {}
+          for j = 1,16 do
+            --norns.pmap.rev[dev][ch][cc]
+            norns.pmap.rev[i][j] = {}
+          end
+        end
+      end
       norns.pmap.data = tab.load(_path.data .. "cheat_codes_2/collection-"..selected_coll.."/params/map-data.txt")
-      -- BUT, i want the device to be present or reassigned...
+      print('clearing old mapping files, creating new PMAPs...')
+      mc.write_mappings(selected_coll)
+      os.execute('rm -r '.._path.data .. "cheat_codes_2/collection-"..selected_coll.."/params/mappings.txt")
+      norns.pmap.clear()
+      mc.read_mappings(selected_coll)
+    else
+      print('no prev data file for mapping')
+      norns.pmap.clear()
+      mc.read_mappings(selected_coll)
     end
   end
 
@@ -6002,6 +6397,14 @@ function named_loadstate(path)
     clock.run(reset_step_seq,i,4)
   end
     
+  if util.file_exists(_path.data .. "cheat_codes_2/collection-"..selected_coll.."/user_script.lua") then
+    print("loading user_script.lua")
+    local user_script_filepath = (_path.data .. "cheat_codes_2/collection-"..selected_coll.."/user_script.lua")
+    user_script = dofile(user_script_filepath)
+    if user_script.init then
+      user_script.init()
+    end
+  end
 
   grid_dirty = true
 
@@ -6034,26 +6437,30 @@ function reset_step_seq(i,val) -- TODO: funky on some...
 end
 
 function quick_save_pattern(i)
-  if grid_pat[i].count > 0 and grid_pat[i].rec == 0 then
+  if (grid_pat[i].count > 0 and grid_pat[i].rec == 0 and grid_pat[i].play == 1) -- if it's playing, then save pattern
+  or (grid_pat[i].count > 0 and grid_pat[i].rec == 0 and not arp[i].playing) -- if it's dormant and arp isn't playing, save pattern
+  then
     copy_entire_pattern(i)
     save_pattern(i,pattern_saver[i].save_slot+8*(i-1),"pattern")
     pattern_saver[i].saved[pattern_saver[i].save_slot] = 1
     pattern_saver[i].load_slot = pattern_saver[i].save_slot
-    if params:string("grid_size") == "128" then
+    if params:string("grid_size") == "128/256" then
       g:led(math.floor((i-1)*5)+1,9-pattern_saver[i].save_slot,15)
     end
     -- g:refresh()
-  elseif #arp[i].notes > 0 then
+  elseif (#arp[i].notes > 0 and arp[i].playing)
+  or (#arp[i].notes > 0 and not arp[i].playing and grid_pat[i].play == 0)
+  then
     save_pattern(i,pattern_saver[i].save_slot+8*(i-1),"arp")
     pattern_saver[i].saved[pattern_saver[i].save_slot] = 1
     pattern_saver[i].load_slot = pattern_saver[i].save_slot
-    if params:string("grid_size") == "128" then
+    if params:string("grid_size") == "128/256" then
       g:led(math.floor((i-1)*5)+1,9-pattern_saver[i].save_slot,15)
     end
     -- g:refresh()
   else
     print("no pattern data to save")
-    if params:string("grid_size") == "128" then
+    if params:string("grid_size") == "128/256" then
       g:led(math.floor((i-1)*5)+1,9-pattern_saver[i].save_slot,0)
     end
     -- g:refresh()
@@ -6073,7 +6480,7 @@ function quick_delete_pattern(i)
 end
 
 function test_save(i)
-  clock.sleep(0.25)
+  clock.sleep(pattern_saver[i].saved[pattern_saver[i].save_slot] == 1 and 0.75 or 0.25)
   pattern_saver[i].active = true
   if pattern_saver[i].active then
     if not grid_alt then
@@ -6090,11 +6497,14 @@ function test_load(slot,destination,source)
     if pattern_saver[destination].load_slot ~= slot-((destination-1)*8) then
       pattern_saver[destination].load_slot = slot-((destination-1)*8)
     end
+
+    -- if it isn't a grid press:
     if grid_pat[destination].play == 1 and source ~= "from_grid" then
       grid_pat[destination]:clear()
     elseif arp[destination].playing and source ~= "from_grid" then
-      arp[destination].pause = true
-      arp[destination].playing = false
+      -- arp[destination].pause = true
+      -- arp[destination].playing = false
+      arps.clear(destination)
     elseif grid_pat[destination].tightened_start == 1 then -- not relevant?
       print("why does this happen? tell dan it happened: 2917107")
       -- grid_pat[destination].tightened_start = 0
@@ -6102,23 +6512,66 @@ function test_load(slot,destination,source)
       -- quantized_grid_pat[destination].current_step = grid_pat[destination].start_point
       -- quantized_grid_pat[destination].sub_step = 1
     end
+
     if not transport.is_running then
+      print("loading while transport is not running")
       load_pattern(slot,destination)
+      if type_of_pattern_loaded[destination] == "arp" then
+        grid_pat[destination]:clear()
+      elseif type_of_pattern_loaded[destination] == "grid" then
+        arps.clear(destination)
+      end
     else
-      -- print(type_of_pattern_loaded[destination])
+      -- print("test_load is running...",slot,destination,source,pattern_saver[destination].saved[slot-((destination-1)*8)])
       if source ~= "from_grid" then
+        -- print("this hsould load fine...")
+        load_pattern(slot,destination)
+        if type_of_pattern_loaded[destination] ~= "euclid" then
+          start_pattern(grid_pat[destination],"jumpstart")
+        end
+        -- print("loading "..clock.get_beats())
+      elseif params:string("launch_quantization") == "next beat" then
+        if source == "from_grid"
+        and type_of_pattern_loaded[destination] ~= "arp"
+        and type_of_pattern_loaded[destination] ~= "euclid"
+        then
+          print("going to start grid pattern with delayed load")
+          start_pattern(grid_pat[destination],"restart","delayed_load",{slot,destination})
+        elseif source == "from_grid" then
+          print("dead zone...",type_of_pattern_loaded[destination])
+          load_pattern(slot,destination)
+          print("starting a pattern!!!", type_of_pattern_loaded[destination])
+          if type_of_pattern_loaded[destination] == "grid" then
+            if arp[destination].playing then
+              arps.toggle("stop",destination)
+            end
+            grid_pat[destination]:start()
+          end
+        end
+      elseif params:string("launch_quantization") == "free" then
+        if grid_pat[destination].play == 1 then
+          grid_pat[destination]:clear()
+        elseif arp[destination].playing then
+          -- arp[destination].pause = true
+          -- arp[destination].playing = false
+          arps.clear(destination)
+        end
         load_pattern(slot,destination)
         start_pattern(grid_pat[destination],"jumpstart")
-      elseif params:string("launch_quantization") == "next beat" and source == "from_grid" and type_of_pattern_loaded[destination] ~= "arp" then
-        -- print("trying to load grid")
-        start_pattern(grid_pat[destination],"restart","delayed_load",{slot,destination})
+        goto finish_it_up
       end
       if grid_pat[destination].count > 0 and params:string("launch_quantization") ~= "next bar" then
+        if params:string("launch_quantization") == "free" then
+          -- print("play it now!!")
+          load_pattern(slot,destination)
+          start_pattern(grid_pat[destination],"jumpstart")
+        end
         -- start_pattern(grid_pat[destination],"restart","delayed_load",{slot,destination})
       elseif params:string("launch_quantization") == "next bar" and source == "from_grid" then
         -- print("loading whatever...")
         start_pattern(grid_pat[destination],"restart","delayed_load",{slot,destination})
       elseif type_of_pattern_loaded[destination] == "arp" then
+        print("We've GOT AN ARP")
         if loading_arp_from_grid[destination] ~= nil then
           clock.cancel(loading_arp_from_grid[destination])
         end
@@ -6128,7 +6581,6 @@ function test_load(slot,destination,source)
             clock.sync(1)
             load_pattern(slot,destination)
             if type_of_pattern_loaded[destination] == "arp" then
-              -- print("well, arp has notes, so play 'em!"..clock.get_beats())
               local arp_start =
               {
                 ["fwd"] = arp[destination].start_point - 1
@@ -6147,9 +6599,27 @@ function test_load(slot,destination,source)
             end
           end
         )
+      elseif type_of_pattern_loaded[destination] == "euclid" and source == "from_grid" then
+        print("hi euclid!")
+        if loading_euclid_from_grid[destination] ~= nil then
+          clock.cancel(loading_euclid_from_grid[destination])
+        end
+        loading_euclid_from_grid[destination] = 
+        clock.run(
+          function()
+            clock.sync(1)
+            load_pattern(slot,destination)
+            if type_of_pattern_loaded[destination] == "euclid" then
+             
+            else
+              start_pattern(grid_pat[destination],"jumpstart")
+            end
+          end
+        )
       end
     end
   end
+  ::finish_it_up::
 end
 
 function save_pattern(source,slot,style)
@@ -6252,6 +6722,10 @@ function save_pattern(source,slot,style)
     --/GIRAFFE
     print("saved pattern "..source.." to slot "..slot)
   elseif style == "arp" then
+    arp[source].pad_times = {}
+    for i = 1,16 do
+      arp[source].pad_times[i] = bank[source][i].arp_time
+    end
     tab.save(arp[source],_path.data .. "cheat_codes_2/collection-"..selected_coll.."/patterns/"..slot..".data")
     print("saved arp "..source.." to slot "..slot)
   end
@@ -6568,11 +7042,32 @@ function load_pattern(slot,destination,print_also)
       type_of_pattern_loaded[destination] = "arp"
       -- print("it's an arp!")
       arp[destination] = tab.load(_path.data .. "cheat_codes_2/collection-"..selected_coll.."/patterns/"..slot..".data")
+      if arp[destination].pad_times ~= nil then
+        for i = 1,#arp[destination].pad_times do
+          bank[destination][i].arp_time = arp[destination].pad_times[i]
+        end
+      else
+        for i = 1,16 do
+          bank[destination][i].arp_time = arp[destination].time
+        end
+      end
       -- arp[destination].pause = true
       -- arp[destination].playing = false
       -- arp[destination] = tab.load(_path.data .. "cheat_codes_2/pattern"..selected_coll.."_"..slot..".data")
       ignore_external_timing = true
     end
+
+    if type_of_pattern_loaded[destination] == "grid" then
+      print("loading up a grid pattern")
+    elseif type_of_pattern_loaded[destination] == "arp" then
+      print("loading up an arp!")
+      if grid_pat[destination].play == 1 then
+        print("stopping pattern!")
+        stop_pattern(grid_pat[destination])
+        -- grid_pat[destination]:clear()
+      end
+    end
+
 
     io.close(file)
     if not ignore_external_timing then
@@ -6710,29 +7205,42 @@ end
 
 function save_midi_pattern(which)
   local file = io.open(_path.data .. "cheat_codes_2/collection-"..selected_coll.."/patterns/midi"..which..".data", "w+")
-  io.output(file)
-  if midi_pat[which].count > 0 then
-    io.write("stored midi pattern: collection "..selected_coll..", pattern "..which.."\n")
-    io.write("total: "..midi_pat[which].count .. "\n")
-    for i = 1,midi_pat[which].count do
-      io.write("unquant time: "..midi_pat[which].time[i] .. "\n")
-      --io.write("quant duration: "..midi_pat[which].time_beats[i] .. "\n")
-      io.write("quant duration: 0.8".."\n")
-      io.write("target: "..midi_pat[which].event[i].target .. "\n")
-      io.write("note: "..midi_pat[which].event[i].note .. "\n")
+  if file then
+    io.output(file)
+    if midi_pat[which].count > 0 then
+      io.write("stored midi pattern: collection "..selected_coll..", pattern "..which.."\n")
+      io.write("total: "..midi_pat[which].count .. "\n")
+      for i = 1,midi_pat[which].count do
+        io.write("unquant time: "..midi_pat[which].time[i] .. "\n")
+        --io.write("quant duration: "..midi_pat[which].time_beats[i] .. "\n")
+        io.write("quant duration: 0.8".."\n")
+        io.write("target: "..midi_pat[which].event[i].target .. "\n")
+        io.write("note: "..midi_pat[which].event[i].note .. "\n")
+      end
+      io.write("metro props time: "..midi_pat[which].metro.props.time .. "\n")
+      io.write("metro prev time: "..midi_pat[which].prev_time .. "\n")
+      io.write("pattern start point: " .. midi_pat[which].start_point .. "\n")
+      io.write("pattern end point: " .. midi_pat[which].end_point .. "\n")
+      io.write("playmode: " .. midi_pat[which].playmode .. "\n")
+      io.write("random_pitch_range: " .. midi_pat[which].random_pitch_range .. "\n")
+      io.write("rec_clock_time: " .. midi_pat[which].rec_clock_time .. "\n")
+    else
+      io.write("no data present")
     end
-    io.write("metro props time: "..midi_pat[which].metro.props.time .. "\n")
-    io.write("metro prev time: "..midi_pat[which].prev_time .. "\n")
-    io.write("pattern start point: " .. midi_pat[which].start_point .. "\n")
-    io.write("pattern end point: " .. midi_pat[which].end_point .. "\n")
-    io.write("playmode: " .. midi_pat[which].playmode .. "\n")
-    io.write("random_pitch_range: " .. midi_pat[which].random_pitch_range .. "\n")
-    io.write("rec_clock_time: " .. midi_pat[which].rec_clock_time .. "\n")
+    io.close(file)
+    print("saved midi pattern "..which)
   else
-    io.write("no data present")
+    if which == 3 then
+      -- print("BAD FILENAME"..which)
+      if not save_fail_state then
+        save_fail_state = true
+        -- print("running cannot save from midi file creaiton")
+        clock.run(cannot_save_screen,text)
+        _norns.key(1,1)
+        _norns.key(1,0)
+      end
+    end
   end
-  io.close(file)
-  print("saved midi pattern "..which)
 end
 
 function load_midi_pattern(which)

@@ -86,6 +86,16 @@ default_vals =
   , target = 1
   , curve = "linear"
   }
+, ["bank level"] =
+  {
+    params_name = "bank level"
+  , enabled = false
+  , destructive = true
+  , min = 0
+  , max = 127
+  , target = 1
+  , curve = "linear"
+  }
 , ["filter tilt"] =
   {
     params_name = "filter tilt"
@@ -174,6 +184,56 @@ default_vals =
   , enabled = false
   , destructive = true
   , min = -1
+  , max = 1
+  , target = 1
+  , curve = "linear"
+  }
+, ["delay output"] =
+  {
+    params_name = "delay output"
+  , enabled = false
+  , destructive = true
+  , min = 0
+  , max = 1
+  , target = 1
+  , curve = "linear"
+  }
+, ["delay input a"] =
+  {
+    params_name = "delay input a"
+  , enabled = false
+  , destructive = true
+  , min = 0
+  , max = 1
+  , target = 1
+  , curve = "linear"
+  }
+, ["delay input b"] =
+  {
+    params_name = "delay input b"
+  , enabled = false
+  , destructive = true
+  , min = 0
+  , max = 1
+  , target = 1
+  , curve = "linear"
+  }
+, ["delay input c"] =
+  {
+    params_name = "delay input c"
+  , enabled = false
+  , destructive = true
+  , min = 0
+  , max = 1
+  , target = 1
+  , curve = "linear"
+  }
+, ["delay input ext"] =
+  {
+    params_name = "delay input ext"
+  , enabled = false
+  , destructive = true
+  , min = 0
   , max = 1
   , target = 1
   , curve = "linear"
@@ -359,6 +419,9 @@ function Macro:pass_value(val)
       end
     end
   end
+  if menu == "macro_config" then
+    screen_dirty = true
+  end
 end
 
 local parameter_names = 
@@ -367,6 +430,7 @@ local parameter_names =
 , "current pad"
 , "rate"
 , "pan"
+, "bank level"
 , "filter tilt"
 , "start point"
 , "end point"
@@ -376,6 +440,11 @@ local parameter_names =
 , "delay free time"
 , "delay rate"
 , "delay pan"
+, "delay input a"
+, "delay input b"
+, "delay input c"
+, "delay input ext"
+, "delay output"
 , "macro"
 , "w/curve"
 , "w/ramp"
@@ -496,8 +565,15 @@ function Container:add_params()
   params:add_group("macros",8)
   for i = 1,8 do
     params:add_number("macro "..i, "macro "..i, 0,127,0)
-    params:set_action("macro "..i, function(x) if all_loaded then macro[i]:pass_value(x) end end)
+    params:set_action("macro "..i, 
+    function(x)
+      if all_loaded then
+        macro[i]:pass_value(x)
+      end
+    end)
+    _lfos:register("macro "..i, 'macro LFOs')
   end
+  _lfos:add_params('macro LFOs')
 end
 
 function Container:convert(prm,trg,indx,controlspec_type)

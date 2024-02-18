@@ -37,7 +37,7 @@ function grid_actions.init(x,y,z)
   
   if osc_communication == true then osc_communication = false end
   
-  if params:string("grid_size") == "128" then
+  if params:string("grid_size") == "128/256" then
 
     if grid_page == 0 then
       
@@ -54,52 +54,19 @@ function grid_actions.init(x,y,z)
         if z == 1 and x > 0 + (5*(i-1)) and x <= 4 + (5*(i-1)) and y >=5 then
           if bank[i].focus_hold == false then
             grid_actions.pad_down(i,(math.abs(y-9)+((x-1)*4))-(20*(i-1)))
-            -- if not grid_alt then
-            --   selected[i].x = x
-            --   selected[i].y = y
-            --   selected[i].id = (math.abs(y-9)+((x-1)*4))-(20*(i-1))
-            --   bank[i].id = selected[i].id
-            --   which_bank = i
-            --   if menu == 11 then
-            --     help_menu = "banks"
-            --   end
-            --   pad_clipboard = nil
-            --   if bank[i].quantize_press == 0 then
-            --     if arp[i].enabled and grid_pat[i].rec == 0 and not arp[i].pause then
-            --       if arp[i].down == 0 and params:string("arp_"..i.."_hold_style") == "last pressed" then
-            --         for j = #arp[i].notes,1,-1 do
-            --           table.remove(arp[i].notes,j)
-            --         end
-            --       end
-            --       arp[i].time = bank[i][bank[i].id].arp_time
-            --       arps.momentary(i, bank[i].id, "on")
-            --       arp[i].down = arp[i].down + 1
-            --     else
-            --       if rytm.track[i].k == 0 then
-            --         cheat(i, bank[i].id)
-            --       end
-            --       grid_pattern_watch(i)
-            --     end
-            --   else
-            --     table.insert(quantize_events[i],selected[i].id)
-            --   end
-            -- else
-            --   local released_pad = (math.abs(y-9)+((x-1)*4))-(20*(i-1))
-            --   arps.momentary(i, released_pad, "off")
-            -- end
           else
             if not grid_alt then
               bank[i].focus_pad = (math.abs(y-9)+((x-1)*4))-(20*(i-1))
               mc.mft_redraw(bank[i][bank[i].focus_pad],"all")
             elseif grid_alt then
-              if not pad_clipboard then
+              if not pad_clipboard or tab.count(pad_clipboard) == 0 then
                 pad_clipboard = {}
                 bank[i].focus_pad = (math.abs(y-9)+((x-1)*4))-(20*(i-1))
                 pad_copy(pad_clipboard, bank[i][bank[i].focus_pad])
               else
                 bank[i].focus_pad = (math.abs(y-9)+((x-1)*4))-(20*(i-1))
                 pad_copy(bank[i][bank[i].focus_pad], pad_clipboard)
-                pad_clipboard = nil
+                pad_clipboard = {}
               end
             end
           end
@@ -107,16 +74,6 @@ function grid_actions.init(x,y,z)
         elseif z == 0 and x > 0 + (5*(i-1)) and x <= 4 + (5*(i-1)) and y >=5 then
           if not bank[i].focus_hold then
             grid_actions.pad_up(i,(math.abs(y-9)+((x-1)*4))-(20*(i-1)))
-            -- local released_pad = (math.abs(y-9)+((x-1)*4))-(20*(i-1))
-            -- if bank[i][released_pad].play_mode == "momentary" then
-            --   softcut.rate(i+1,0)
-            -- end
-            -- if (arp[i].enabled and not arp[i].hold) or (menu == 9 and not arp[i].hold) then
-            --   arps.momentary(i, released_pad, "off")
-            --   arp[i].down = arp[i].down - 1
-            -- elseif (arp[i].enabled and arp[i].hold and not arp[i].pause) or (menu == 9 and arp[i].hold and not arp[i].pause) then
-            --   arp[i].down = arp[i].down - 1
-            -- end
           end
         end
       end
@@ -237,6 +194,13 @@ function grid_actions.init(x,y,z)
       
       if x == 16 and y == 8 then
         grid_alt = z == 1 and true or false
+        if grid_alt == false then
+          if pad_clipboard == nil then
+            pad_clipboard = {}
+          elseif tab.count(pad_clipboard) > 0 then
+            pad_clipboard = {}
+          end
+        end
         arc_alt = z
         if menu ~= 1 then screen_dirty = true end
       end
@@ -328,7 +292,7 @@ function grid_actions.init(x,y,z)
               toggle_buffer(8-y)
             end
             if grid_alt then
-              buff_flush()
+              buff_flush(rec.focus)
             end
           end
         end
@@ -663,7 +627,6 @@ function grid_actions.init(x,y,z)
             del.set_value(6-y, x-3, "feedback")
           end
         elseif x == 9 then
-          -- if grid.alt_delay then
           if grid_alt then
             del.quick_action(6-y, "clear")
           end
@@ -672,7 +635,6 @@ function grid_actions.init(x,y,z)
       elseif y == 1 or y == 8 then
         if x >= 10 and x <=14 then
           if z == 1 then
-            -- del.set_value(y == 8 and 1 or 2,x-9,grid.alt_delay == true and "send all" or "send")
             del.set_value(y == 8 and 1 or 2,x-9,grid_alt == true and "send all" or "send")
           end
         elseif x == 15 then
@@ -695,12 +657,10 @@ function grid_actions.init(x,y,z)
               delay[target].saver_active = true
               clock.run(del.build_bundle,target,bundle)
             elseif saved_already then
-              -- if grid.alt_delay then
               if grid_alt then
                 del.clear_bundle(target,bundle)
               else
                 del.restore_bundle(target,bundle)
-                delay[target].selected_bundle = bundle
               end
             end
           elseif z == 0 then
@@ -775,9 +735,9 @@ function grid_actions.init(x,y,z)
                 local xval = {9,4,-1}
                 local released_pad = (math.abs((y + 2)-9)+(((x - xval[id])-1)*4))-(20*(id-1))
                 arps.momentary(id, released_pad, "off")
-                arp[id].down = arp[id].down - 1
+                arp[id].down = util.clamp(arp[id].down - 1,0,math.huge)
               elseif arp[id].enabled and arp[id].hold then
-                arp[id].down = arp[id].down - 1
+                arp[id].down = util.clamp(arp[id].down - 1,0,math.huge)
               end
             end
           end
@@ -829,8 +789,6 @@ function grid_actions.init(x,y,z)
       end
 
       if x == 16 and y == 8 then
-        -- grid.alt_delay = not grid.alt_delay
-        -- grid_alt = not grid_alt
         grid_alt = z == 1 and true or false
       end
 
@@ -956,7 +914,7 @@ function grid_actions.init(x,y,z)
             selected[bank_64].id = (4*(y-4))+x
             b.id = selected[bank_64].id
             which_bank = bank_64
-            pad_clipboard = nil
+            pad_clipboard = {}
             if b.quantize_press == 0 then
               if arp[bank_64].enabled and grid_pat[bank_64].rec == 0 and not arp[bank_64].pause then
                 if arp[bank_64].down == 0 and params:string("arp_"..bank_64.."_hold_style") == "last pressed" then
@@ -1005,7 +963,7 @@ function grid_actions.init(x,y,z)
             else
               b.focus_pad = (4*(y-4))+x
               pad_copy(b[b.focus_pad], pad_clipboard)
-              pad_clipboard = nil
+              pad_clipboard = {}
             end
           end
         end
@@ -1018,9 +976,9 @@ function grid_actions.init(x,y,z)
           end
           if (arp[bank_64].enabled and not arp[bank_64].hold) or (menu == 9 and not arp[bank_64].hold) then
             arps.momentary(bank_64, released_pad, "off")
-            arp[bank_64].down = arp[bank_64].down - 1
+            arp[bank_64].down = util.clamp(arp[bank_64].down - 1,0,math.huge)
           elseif (arp[bank_64].enabled and arp[bank_64].hold and not arp[bank_64].pause) or (menu == 9 and arp[bank_64].hold and not arp[bank_64].pause) then
-            arp[bank_64].down = arp[bank_64].down - 1
+            arp[bank_64].down = util.clamp(arp[bank_64].down - 1,0,math.huge)
           end
         end
       end
@@ -1108,13 +1066,14 @@ function grid_actions.init(x,y,z)
                   else
                     if params:string("clock_source") == "internal" then
                       -- clock.internal.start(3.9)
+                      transport.pending = true
                       clock.internal.start(-0.1)
                     -- elseif params:string("clock_source") == "link" then
                     else
+                      transport.pending = true
                       transport.cycle = 1
                       clock.transport.start()
                     end
-                    transport.pending = true
                     -- clock.transport.start()
                   end
                 end
@@ -1236,7 +1195,7 @@ function grid_actions.init(x,y,z)
             toggle_buffer(x)
           end
           if grid_alt then
-            buff_flush()
+            buff_flush(rec.focus)
           end
         end
       end
@@ -1362,12 +1321,10 @@ function grid_actions.init(x,y,z)
               delay[target].saver_active = true
               clock.run(del.build_bundle,target,bundle)
             elseif saved_already then
-              -- if grid.alt_delay then
               if grid_alt then
                 del.clear_bundle(target,bundle)
               else
                 del.restore_bundle(target,bundle)
-                delay[target].selected_bundle = bundle
               end
             end
           elseif z == 0 then
@@ -1408,6 +1365,7 @@ function grid_actions.init(x,y,z)
           pattern_saver[y].clock = clock.run(test_save,y)
           -- print("starting save "..pattern_saver[y].clock)
         elseif z == 0 then
+
           if pattern_saver[y].clock ~= nil then
             clock.cancel(pattern_saver[y].clock)
           end
@@ -1415,7 +1373,7 @@ function grid_actions.init(x,y,z)
           if not grid_alt and saved_pat == 1 then
             if pattern_saver[y].saved[x] == 1 then
               pattern_saver[y].load_slot = x
-              test_load(x+(8*(y-1)),y)
+              test_load(x+(8*(y-1)),y,"from_grid")
             end
           end
         end
@@ -1435,6 +1393,21 @@ function grid_actions.init(x,y,z)
 end
 
 function grid_actions.arp_handler(i)
+  if not transport.is_running then
+    print("arp enabled, starting transport...")
+    if transport.is_running then
+      clock.transport.stop()
+    else
+      if params:string("clock_source") == "internal" then
+        transport.pending = true
+        clock.internal.start(-0.1)
+      else
+        transport.pending = true
+        transport.cycle = 1
+        clock.transport.start()
+      end
+    end
+  end
   if not arp[i].enabled then
     arp[i].enabled = true
   elseif not arp[i].hold then
@@ -1458,12 +1431,7 @@ end
 
 function grid_actions.kill_arp(i)
   page.arp_page_sel = i
-  arp[i].hold = false
-  if not arp[i].hold then
-    arps.clear(i)
-  end
-  arp[i].down = 0
-  arp[i].enabled = false
+  arps.clear(i)
 end
 
 function grid_actions.toggle_pad_loop(i)
@@ -1487,8 +1455,8 @@ function grid_actions.index_to_grid_pos(val,columns,i)
   return {x,y}
 end
 
-function grid_actions.pad_down(i,p)
-  if not grid_alt then
+function grid_actions.pad_down(i,p,external_seq,silent)
+  if (not grid_alt and not external_seq) or external_seq then
     selected[i].x = grid_actions.index_to_grid_pos(p,4,i)[2] + (5*(i-1))
     selected[i].y = 9 - grid_actions.index_to_grid_pos(p,4,i)[1]
     selected[i].id = p
@@ -1497,7 +1465,7 @@ function grid_actions.pad_down(i,p)
     if menu == 11 then
       help_menu = "banks"
     end
-    pad_clipboard = nil
+    pad_clipboard = {}
     if bank[i].quantize_press == 0 then
       if arp[i].enabled and grid_pat[i].rec == 0 and not arp[i].pause then
         if arp[i].down == 0 and params:string("arp_"..i.."_hold_style") == "last pressed" then
@@ -1529,24 +1497,35 @@ function grid_actions.pad_down(i,p)
         end
       end
     end
-    grid_pattern_watch(i)
+    if not silent then
+      grid_pattern_watch(i)
+    end
   else
     local released_pad = p
     arps.momentary(i, released_pad, "off")
+    -- print("removing arp note")
   end
+  grid_dirty = true
+  screen_dirty = true
 end
 
-function grid_actions.pad_up(i,p)
+function grid_actions.pad_up(i,p,external_seq)
   local released_pad = p
   if bank[i][released_pad].play_mode == "momentary" then
     softcut.rate(i+1,0)
   end
   if (arp[i].enabled and not arp[i].hold) or (menu == 9 and not arp[i].hold) then
+    -- print("pad up 1")
     arps.momentary(i, released_pad, "off")
-    arp[i].down = arp[i].down - 1
+    arp[i].down = util.clamp(arp[i].down - 1,0,math.huge)
   elseif (arp[i].enabled and arp[i].hold and not arp[i].pause) or (menu == 9 and arp[i].hold and not arp[i].pause) then
-    arp[i].down = arp[i].down - 1
+    if (not grid_alt and not external_seq) or external_seq then
+      -- print("pad up 2", grid_alt)
+      arp[i].down = util.clamp(arp[i].down - 1,0,math.huge)
+    end
   end
+  grid_dirty = true
+  screen_dirty = true
 end
 
 function grid_actions.grid_pat_handler(i)
@@ -1592,13 +1571,14 @@ function grid_actions.grid_pat_handler(i)
             else
               if params:string("clock_source") == "internal" then
                 -- clock.internal.start(3.9)
+                transport.pending = true
                 clock.internal.start(-0.1)
               -- elseif params:string("clock_source") == "link" then
               else
                 transport.cycle = 1
+                transport.pending = true
                 clock.transport.start()
               end
-              transport.pending = true
               -- clock.transport.start()
             end
           end
@@ -1633,6 +1613,7 @@ function grid_actions.grid_pat_handler(i)
     help_menu = "grid patterns"
     which_bank = i
   end
+  grid_dirty = true
 end
 
 return grid_actions

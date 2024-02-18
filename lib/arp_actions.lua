@@ -4,11 +4,7 @@ arp = {}
 
 arp_clock = {}
 
--- arp_lattice = lattice:new{
---   auto = true,
---   meter = 4,
---   ppqn = 96
--- }
+local swing_step = {1,1,1}
 
 function arp_actions.init(target)
     arp[target] = {}
@@ -24,26 +20,9 @@ function arp_actions.init(target)
     arp[target].end_point = 1
     arp[target].down = 0
     arp[target].retrigger = true
+    arp[target].alt = false
     arp_clock[target] = clock.run(arp_actions.arpeggiate,target)
-    -- arp[target].lattice = arp_lattice:new_pattern{
-    --   action = function() arp_actions.lattice_advance(target) end,
-    --   division = arp[target].time/4,
-    --   enabled = arp[target].enabled
-    -- }
-    -- clock.run(function() clock.sync(4) arp_lattice:start() end)
 end
-
--- function arp_actions.toggle_arp(target,enable)
---   if enable then
---     clock.run(function()
---       arp[target].lattice.phase = 0
---       clock.sync(arp[target].time)
---       arp[target].lattice:start()
---     end)
---   else
---     arp[target].lattice:stop()
---   end
--- end
 
 function arp_actions.find_index(tab,el)
     local rev = {}
@@ -75,14 +54,17 @@ end
 function arp_actions.toggle(state,target)
   local i = target
   if state == "start" then
-    local arp_start =
-    {
-      ["fwd"] = arp[i].start_point - 1
-    , ["bkwd"] = arp[i].end_point + 1
-    , ["pend"] = arp[i].start_point
-    , ["rnd"] = arp[i].start_point - 1
-    }
-    arp[i].step = arp_start[arp[i].mode]
+    if params:string("arp_"..i.."_disengage") == 'reset' then
+      local arp_start =
+      {
+        ["fwd"] = arp[i].start_point - 1
+      , ["bkwd"] = arp[i].end_point + 1
+      , ["pend"] = arp[i].start_point
+      , ["rnd"] = arp[i].start_point - 1
+      }
+      arp[i].step = arp_start[arp[i].mode]
+      swing_step[i] = arp[i].step
+    end
     arp[i].pause = false
     arp[i].playing = true
     if arp[i].mode == "pend" then
@@ -94,35 +76,21 @@ function arp_actions.toggle(state,target)
   end
 end
 
--- function arp_actions.lattice_advance(target)
---   if target == 1 then
---     print(clock.get_beats())
---     if transport.is_running then
---       if #arp[target].notes > 0 then
---         if arp[target].pause == false then
---           -- if arp[target].step == 1 then print("arp "..target, clock.get_beats()) end
---           if menu ~= 1 then screen_dirty = true end
---           if arp[target].mode == "fwd" then
---             arp_actions.forward(target)
---           elseif arp[target].mode == "bkwd" then
---             arp_actions.backward(target)
---           elseif arp[target].mode == "pend" then
---             arp_actions.pendulum(target)
---           elseif arp[target].mode == "rnd" then
---             arp_actions.random(target)
---           end
---           arp[target].playing = true
---           arp_actions.cheat(target,arp[target].step)
---           grid_dirty = true
---         else
---           arp[target].playing = false
---         end
---       else
---         arp[target].playing = false
---       end
---     end
---   end
--- end
+function arp_actions.process(target)
+  if arp[target].mode == "fwd" then
+    arp_actions.forward(target)
+  elseif arp[target].mode == "bkwd" then
+    arp_actions.backward(target)
+  elseif arp[target].mode == "pend" then
+    arp_actions.pendulum(target)
+  elseif arp[target].mode == "rnd" then
+    arp_actions.random(target)
+  end
+  swing_step[target] = swing_step[target] + 1
+  arp_actions.cheat(target,arp[target].step)
+  grid_dirty = true
+  screen_dirty = true
+end
 
 function arp_actions.arpeggiate(target)
   while true do
@@ -130,19 +98,20 @@ function arp_actions.arpeggiate(target)
     if transport.is_running then
       if #arp[target].notes > 0 then
         if arp[target].pause == false then
-          -- if arp[target].step == 1 then print("arp "..target, clock.get_beats()) end
           if menu ~= 1 then screen_dirty = true end
-          if arp[target].mode == "fwd" then
-            arp_actions.forward(target)
-          elseif arp[target].mode == "bkwd" then
-            arp_actions.backward(target)
-          elseif arp[target].mode == "pend" then
-            arp_actions.pendulum(target)
-          elseif arp[target].mode == "rnd" then
-            arp_actions.random(target)
+
+          if params:get("arp_"..target.."_swing") > 50 and (params:string("arp_"..target.."_swing_style") == 'even steps' and arp[target].step % 2 == 1 or swing_step[target]%2 == 1) then
+            -- local base_time = (clock.get_beat_sec() * arp[target].time)
+            local base_time = (clock.get_beat_sec() * bank[target][bank[target].id].arp_time)
+            local swung_time =  base_time*util.linlin(50,100,0,1,params:get("arp_"..target.."_swing"))
+            clock.run(function()
+              clock.sleep(swung_time)
+              arp_actions.process(target)
+            end)
+          else
+            arp_actions.process(target,source)
           end
           arp[target].playing = true
-          arp_actions.cheat(target,arp[target].step)
           grid_dirty = true
         else
           arp[target].playing = false
@@ -217,16 +186,19 @@ function arp_actions.cheat(target,step)
 end
 
 function arp_actions.clear(target)
-    arp[target].playing = false
-    arp[target].pause = false
-    arp[target].hold = false
-    arp[target].step = 1
-    arp[target].notes = {}
-    arp[target].start_point = 1
-    arp[target].end_point = 1
-    clock.cancel(arp_clock[target])
-    arp_clock[target] = nil
-    arp_clock[target] = clock.run(arp_actions.arpeggiate,target)
+  arp[target].hold = false
+  arp[target].playing = false
+  arp[target].pause = false
+  arp[target].step = 1
+  swing_step[target] = 1
+  arp[target].notes = {}
+  arp[target].start_point = 1
+  arp[target].end_point = 1
+  clock.cancel(arp_clock[target])
+  arp_clock[target] = nil
+  arp_clock[target] = clock.run(arp_actions.arpeggiate,target)
+  arp[target].down = 0
+  arp[target].enabled = false
 end
 
 function arp_actions.savestate()
@@ -258,6 +230,18 @@ end
 function arp_actions.restore_collection()
   for i = 1,3 do
     arp[i].down = arp[i].down == nil and 0 or arp[i].down
+    if arp[i].alt == nil then arp[i].alt = false end
+    -- below from https://www.rosettacode.org/wiki/Remove_duplicate_elements#Lua
+    local flags = {}
+    for j=1,16 do
+      if not flags[bank[i][j].arp_time] then
+        flags[bank[i][j].arp_time] = true
+      end
+    end
+    if tab.count(flags) > 1 then
+      arp[i].alt = true
+    end
+    --
   end
 end
 
